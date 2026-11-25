@@ -7,6 +7,7 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QStandardPaths>
@@ -169,6 +170,37 @@ private slots:
         QVERIFY(repositories[1].toMap()["archived"].toBool());
         QVERIFY(GitHub::parseRepositories(R"({"message":"Bad credentials"})", &error).isEmpty());
         QVERIFY(!error.isEmpty());
+    }
+
+    void attributesPullRequestsWithoutUsingTheWorkflowActor()
+    {
+        auto runs = GitHub::parseRuns(R"({"workflow_runs":[
+            {"id":1,"event":"pull_request_target","head_sha":"base","repository":{"id":9},
+             "pull_requests":[{"number":11,"base":{"repo":{"id":9}}},{"number":12,"base":{"repo":{"id":8}}}]},
+            {"id":2,"event":"pull_request_target","head_sha":"base","repository":{"id":9},
+             "pull_requests":[{"number":12,"base":{"repo":{"id":9}}}]},
+            {"id":3,"event":"pull_request","head_sha":"commit","head_branch":"topic","head_repository":{"id":4},
+             "actor":{"login":"bot"}},
+            {"id":4,"event":"schedule","head_sha":"commit","head_branch":"topic","actor":{"login":"alice"}},
+            {"id":5,"event":"push","head_sha":"commit","head_branch":"main","head_repository":{"id":4}}
+        ]})");
+        GitHub::attachPullAuthors(runs, R"([
+            {"number":11,"user":{"login":"alice"},"head":{"sha":"commit","ref":"topic","repo":{"id":4}}},
+            {"number":12,"user":{"login":"bob"},"head":{"sha":"commit","ref":"topic","repo":{"id":5}}}
+        ])");
+        QCOMPARE(runs.size(), 5);
+        QCOMPARE(runs[0].toMap()["pullAuthors"].toStringList(), QStringList{"alice"});
+        QCOMPARE(runs[1].toMap()["pullAuthors"].toStringList(), QStringList{"bob"});
+        QCOMPARE(runs[2].toMap()["pullAuthors"].toStringList(), QStringList{"alice"});
+        QVERIFY(runs[3].toMap()["pullAuthors"].toStringList().isEmpty());
+        QVERIFY(runs[4].toMap()["pullAuthors"].toStringList().isEmpty());
+        for (auto &value : runs) {
+            auto run = value.toMap();
+            run["repository"] = "acme/shop";
+            value = run;
+        }
+        const auto builds = GitHub::builds(runs);
+        QVERIFY(builds[0].toMap()["key"] != builds[1].toMap()["key"]);
     }
 
     void opensOnTheRepositoryWatchedLast()
@@ -1308,6 +1340,105 @@ private slots:
         QTRY_VERIFY(backend.builds().size() > 10);
 
         QTest::qWait(300);
+        QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+    }
+    void watchesAnOrganizationAndFiltersInTheWindow()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QFile gh(temporary.filePath("gh"));
+        QVERIFY(gh.open(QIODevice::WriteOnly));
+        gh.write(R"(#!/bin/sh
+for path do :; done
+case "$path" in
+    user/repos*) printf '%s\n' '[{"full_name":"acme/alpha","owner":{"type":"Organization","login":"acme"}}]'; exit ;;
+    repos/acme/alpha/actions/jobs/201/logs) printf '%s\n' 'alpha job output'; exit ;;
+    repos/acme/beta/actions/jobs/202/logs) printf '%s\n' 'beta job output'; exit ;;
+esac
+printf 'HTTP/1.1 200 OK\r\nETag: "fresh"\r\n\r\n'
+case "$path" in
+    orgs/acme/repos*) cat <<'EOF'
+[{"full_name":"acme/alpha","default_branch":"main","private":true},{"full_name":"acme/beta","default_branch":"trunk"},{"full_name":"acme/old","archived":true}]
+EOF
+    ;;
+    repos/acme/alpha/actions/runs/101/jobs*) printf '%s\n' '{"jobs":[{"id":201,"run_id":101,"name":"alpha checks","status":"completed","conclusion":"success"}]}' ;;
+    repos/acme/beta/actions/runs/102/jobs*) printf '%s\n' '{"jobs":[{"id":202,"run_id":102,"name":"beta checks","status":"completed","conclusion":"success"}]}' ;;
+    repos/acme/alpha/actions/runs*) cat <<'EOF'
+{"workflow_runs":[{"id":101,"name":"CI","display_title":"Alpha PR","head_branch":"topic","head_sha":"1234567","event":"pull_request","status":"completed","conclusion":"success","actor":{"login":"morgan"},"repository":{"id":11},"pull_requests":[{"number":10,"base":{"repo":{"id":11}}}],"created_at":"2026-11-25T09:00:00Z","updated_at":"2026-11-25T09:00:30Z"}]}
+EOF
+    ;;
+    repos/acme/beta/actions/runs*) cat <<'EOF'
+{"workflow_runs":[{"id":102,"name":"CI","display_title":"Beta PR","head_branch":"trunk","head_sha":"1234567","event":"pull_request","status":"completed","conclusion":"success","actor":{"login":"alice"},"head_repository":{"id":22},"created_at":"2026-11-25T09:01:00Z","updated_at":"2026-11-25T09:01:30Z"}]}
+EOF
+    ;;
+    repos/acme/alpha/pulls*) printf '%s\n' '[{"number":10,"user":{"login":"alice"}}]' ;;
+    repos/acme/beta/pulls*) printf '%s\n' '[{"number":10,"user":{"login":"morgan"},"head":{"sha":"1234567","ref":"trunk","repo":{"id":22}}}]' ;;
+    *) printf 'Unexpected request: %s\n' "$path" >&2; exit 1 ;;
+esac
+)");
+        gh.close();
+        QVERIFY(gh.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+        const auto oldPath = qgetenv("PATH");
+        qputenv("PATH", temporary.path().toUtf8() + ':' + oldPath);
+        const auto restorePath = qScopeGuard([oldPath] { qputenv("PATH", oldPath); });
+        QFile::remove(stateFile());
+
+        Backend backend("");
+        Theme theme("/nonexistent/omaci");
+        QQmlApplicationEngine engine;
+        QStringList warnings;
+        connect(&engine, &QQmlApplicationEngine::warnings, this, [&](const QList<QQmlError> &errors) {
+            for (const auto &error : errors)
+                warnings << error.toString();
+        });
+        engine.rootContext()->setContextProperty("theme", &theme);
+        engine.rootContext()->setContextProperty("backend", &backend);
+        engine.load(QUrl("qrc:/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(window);
+        QTRY_COMPARE(backend.repositories().size(), 1);
+        typeInto(window, "acme");
+        QTest::keyClick(window, Qt::Key_Return);
+        QTRY_COMPARE(backend.organization(), QString("acme"));
+        QTRY_COMPARE(backend.builds().size(), 2);
+        QCOMPARE(backend.selectedBuild()["repository"].toString(), QString("acme/beta"));
+        QCOMPARE(backend.mainBranch(), QString("trunk"));
+        QTRY_COMPARE(backend.selectedJobId(), 202LL);
+        QTRY_COMPARE(backend.log()->text(), QString("beta job output"));
+        QVERIFY(backend.error().isEmpty());
+        QCOMPARE(Backend::rememberedRepo(), QString("org:acme"));
+
+        QTest::keyClick(window, Qt::Key_M);
+        QCOMPARE(backend.builds().size(), 1);
+        QTest::keyClick(window, Qt::Key_M);
+        QCOMPARE(backend.builds().size(), 2);
+        QTest::keyClick(window, Qt::Key_U);
+        const auto *popup = window->findChild<QObject *>("authorFilter");
+        QVERIFY(popup);
+        QTRY_VERIFY(popup->property("opened").toBool());
+        typeInto(window, "ALICE");
+        QTest::keyClick(window, Qt::Key_Return);
+        QTRY_COMPARE(backend.pullAuthor(), QString("ALICE"));
+        QTRY_COMPARE(backend.builds().size(), 1);
+        QCOMPARE(backend.selectedBuild()["repository"].toString(), QString("acme/alpha"));
+        QTRY_COMPARE(backend.selectedJobId(), 201LL);
+        QTRY_COMPARE(backend.log()->text(), QString("alpha job output"));
+        QCOMPARE(backend.shareUrl(), QString("https://github.com/acme/alpha/actions/runs/101/job/201"));
+        QVERIFY(backend.previous().isEmpty());
+        Backend reopened("");
+        reopened.setOffline(true);
+        reopened.show("");
+        QCOMPARE(reopened.organization(), QString("acme"));
+        QCOMPARE(reopened.pullAuthor(), QString("ALICE"));
+
+        QTest::keyClick(window, Qt::Key_U);
+        QTRY_VERIFY(popup->property("opened").toBool());
+        QTest::keyClick(window, Qt::Key_Backspace);
+        QTest::keyClick(window, Qt::Key_Return);
+        QTRY_VERIFY(backend.pullAuthor().isEmpty());
+        QCOMPARE(backend.builds().size(), 2);
+        QVERIFY(backend.error().isEmpty());
         QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
     }
 };

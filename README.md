@@ -2,7 +2,7 @@
 
 <img src="screenshots/demo.gif" width="800" alt="Omaci on an Omarchy desktop: a running build with about 3m 20s left and its log growing, then the build that failed, opened on its two failing tests, back to the running one, another job, and the menu of repositories narrowed down by typing">
 
-The builds of one repository, live, in a window of their own. How far the build is and about how long it still has, worked out from how long the earlier ones took. Its jobs on a timeline, the steps of the one you picked, and its log, growing at the bottom while the job is still running.
+Live builds for a repository or a GitHub organization. See how far a build has come, how long it usually takes, and the jobs, steps and logs of the build you pick.
 
 A bar widget can tell you that a build is red. It cannot tell you why, and finding out means a browser tab, three clicks into GitHub's Actions page, and a log viewer that loads a few thousand lines into a web page and scrolls them like one. This is the other half: open the build and the failing job is already selected, with the log on the test that failed rather than on the exit code that came after it, and one key copies the link to hand to somebody else.
 
@@ -22,19 +22,22 @@ That builds the app and installs it as an Arch package with `makepkg -fsi`, so i
 
 Omarchy, which already ships everything the build needs: Qt 6, `qmake6` and a compiler. And the [`gh` CLI](https://cli.github.com), logged in with `gh auth login`. Every request goes through it, so Omaci never sees or stores a token, and private repositories work exactly as far as your `gh` login can see them. A `gh` installed through mise is found too, also when the launcher starts the app without your shell's `PATH`.
 
-## Which repository
+## Which repository or organization
 
 ```bash
 omaci                                  # the repository of the directory you are in
 omaci basecamp/omarchy                 # any other
 omaci basecamp/omarchy --sha 4f1c2ab   # open on the build of one commit
+omaci org:basecamp                     # watch a GitHub organization
 ```
 
 <img src="screenshots/repositories.png" width="800" alt="The menu of repositories over the window: a field to type in, then every repository with its description and when it was last pushed, the one being watched on top and an archived one at the bottom">
 
-Started without one, from the launcher say, it opens on the repository of the directory it was started in, and outside a checkout on the one you watched last. The first time, when there is no last one, it opens on a menu of every repository your `gh` login can see, the most recently pushed first, and `G` brings that menu up whenever you want another. Typing narrows it (`acme api` finds `acme/storefront-api`), the arrows and Enter pick, and a whole `owner/name` that isn't yours, a public repository of somebody else's, can be opened as typed.
+Started without a target, Omaci opens the current checkout or the last repository or organization you watched. On the first launch outside a checkout, it opens the picker. Press `G` to reopen it. Type to narrow the list (`acme api` finds `acme/storefront-api`) and use the arrows and Enter to pick. You can type a full `owner/name` directly or enter `org:name` to watch an organization.
 
-There is only ever one window. Starting it again while it is open hands the repository and commit over to that window and brings it to the front, rather than opening a second one next to it.
+The organization view combines the 30 latest workflow runs per accessible, non-archived, enabled repository. Each build shows its repository. Press `U` or click **PR author** and enter a GitHub username to see builds linked to that user's pull requests. Omaci uses PR numbers and matching PR head commits from the 100 most recently updated pull requests in each repository. Older runs can be absent from the filtered view when GitHub provides no matching PR reference. Submit an empty field or click **Clear filter** to see all builds again. Omaci remembers the filter for each organization.
+
+There is only ever one window. Starting Omaci again hands the target and any commit to the open window and brings it to the front.
 
 With `--sha` the build of that commit is the one selected, and the others stay in the list around it, because they are what the estimate is made from. A commit too old to be among the latest builds is looked up by its sha, which has to be the whole one for that.
 
@@ -110,7 +113,7 @@ Every step is a way into the log. Click one, or press `N` and `P`, and the log s
 
 ## Following a running build
 
-While anything is running, Omaci asks GitHub every 6 seconds; when everything is done, once a minute, and right away when you press `Space`, `R` or `Ctrl+R`. The log of a running job is fetched again on every poll, and when it only grew, the new lines are added to the bottom rather than the whole log being replaced, so the view keeps its place.
+In a repository, Omaci polls GitHub every 6 seconds while a build is running and once a minute when idle. Organizations refresh once a minute or more slowly for large organizations. Press `Space`, `R` or `Ctrl+R` to refresh. Omaci fetches the running job's log on each poll and appends new lines to keep your place.
 
 It follows the end as long as you are at the end. Scroll up to read something and it stops, and a button in the corner brings it back, as does `End`. Scroll back down to the bottom and it follows again.
 
@@ -146,7 +149,8 @@ Every one of these is also something you can click.
 | `PgUp` / `PgDn` | scroll the log |
 | `Home` / `End` | top of the log / back to following the end |
 | `Space` / `R` / `Ctrl+R` | refresh now |
-| `G` | watch another repository |
+| `G` | watch a repository or organization |
+| `U` | filter an organization by pull request author |
 | `Esc` | close the help, or leave the tall log |
 | `?` | every shortcut, in the window |
 | `Q` | quit |
@@ -155,7 +159,7 @@ Every one of these is also something you can click.
 
 GitHub allows 5000 requests an hour per user, shared with everything else that uses your `gh` login.
 
-The list of runs is one request a poll, and so are the jobs of each run of your build that is still going. Both are sent with the `ETag` of the previous answer, and GitHub does not count the "nothing changed" it then usually sends back, so those only cost something when a run or a step actually moved. The log of the running job is one request a poll and always counts: about 600 an hour while you watch a build. A finished run's jobs are fetched once and kept for as long as the window is open.
+Polling needs one request per repository for workflow runs and one for pull requests when the author filter is active. The organization view also checks which repositories are accessible. These requests and the running jobs are sent with the previous response's `ETag`, so an unchanged response typically costs nothing. The running job's log always counts as a request. A finished run's jobs are kept in memory.
 
 The menu of repositories is one request per hundred repositories, when you open it, and again at most every five minutes.
 
@@ -169,7 +173,7 @@ The whole palette, live: background, text, accent, and the theme's own green, re
 
 ## Privacy
 
-The one thing written to disk is the name of the repository you watched last, in `~/.local/state/omaci/state.ini`, so the next window opens on it. Builds, jobs and logs live in memory while the window is open and are gone when it closes. The only things that leave the app are the `gh api` calls to GitHub and a `notify-send` when a build finishes. Log lines are drawn as plain text, so nothing in a log can make the window load anything.
+Omaci saves the last target and each organization's PR author filter in `~/.local/state/omaci/state.ini`. Builds, jobs and logs live in memory while the window is open. The only things that leave the app are the `gh api` calls to GitHub and a `notify-send` when a build finishes. Log lines are drawn as plain text.
 
 ## Trying it without GitHub
 

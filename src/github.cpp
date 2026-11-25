@@ -65,13 +65,26 @@ QVariantList parseRuns(const QByteArray &json, QString *error) {
         const auto status = run["status"].toString();
         const auto conclusion = run["conclusion"].toString();
         const auto started = run["run_started_at"].toString();
+        const auto event = run["event"].toString();
+        const auto repositoryId = run["repository"].toObject()["id"].toVariant().toLongLong();
+        QVariantList pullNumbers;
+        if (repositoryId && (event == "pull_request" || event == "pull_request_target")) {
+            for (const auto &value : run["pull_requests"].toArray()) {
+                const auto pull = value.toObject();
+                const auto baseId = pull["base"].toObject()["repo"].toObject()["id"].toVariant().toLongLong();
+                if (baseId == repositoryId && pull["number"].toInt() > 0)
+                    pullNumbers << pull["number"].toInt();
+            }
+        }
         runs << QVariantMap{
             {"id", run["id"].toVariant().toLongLong()},
             {"workflow", run["name"].toString()},
             {"title", run["display_title"].toString()},
             {"branch", run["head_branch"].toString()},
-            {"event", run["event"].toString()},
+            {"event", event},
             {"actor", run["actor"].toObject()["login"].toString()},
+            {"pullNumbers", pullNumbers},
+            {"headRepositoryId", run["head_repository"].toObject()["id"].toVariant().toLongLong()},
             {"number", run["run_number"].toInt()},
             {"attempt", run["run_attempt"].toInt()},
             {"sha", run["head_sha"].toString().left(7)},
@@ -117,26 +130,79 @@ QVariantList parseJobs(const QByteArray &json, QString *error) {
     return jobs;
 }
 
-QVariantList parseRepositories(const QByteArray &json, QString *error) {
+static QJsonArray parseList(const QByteArray &json, const QString &name, QString *error) {
     QJsonParseError parseError;
     const auto document = QJsonDocument::fromJson(json, &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isArray()) {
         if (error)
-            *error = QString("GitHub sent a list of repositories that isn't JSON: %1").arg(parseError.errorString());
+            *error = QString("GitHub sent an invalid list of %1: %2").arg(name, parseError.errorString());
         return {};
     }
+    return document.array();
+}
+
+QVariantList parseRepositories(const QByteArray &json, QString *error) {
     QVariantList repositories;
-    for (const auto &value : document.array()) {
+    for (const auto &value : parseList(json, "repositories", error)) {
         const auto repo = value.toObject();
+        const auto owner = repo["owner"].toObject();
         repositories << QVariantMap{
             {"name", repo["full_name"].toString()},
             {"description", repo["description"].toString()},
             {"private", repo["private"].toBool()},
             {"archived", repo["archived"].toBool()},
+            {"disabled", repo["disabled"].toBool()},
+            {"defaultBranch", repo["default_branch"].toString()},
+            {"organization", owner["type"].toString() == "Organization" ? owner["login"].toString() : QString()},
             {"pushedAt", repo["pushed_at"].toString()},
         };
     }
     return repositories;
+}
+
+void attachPullAuthors(QVariantList &runs, const QByteArray &json, QString *error) {
+    struct PullHead {
+        QString branch;
+        qlonglong repositoryId;
+        QString author;
+    };
+    QHash<int, QString> byNumber;
+    QMultiHash<QString, PullHead> byHead;
+    for (const auto &value : parseList(json, "pull requests", error)) {
+        const auto pull = value.toObject();
+        const auto author = pull["user"].toObject()["login"].toString();
+        const auto head = pull["head"].toObject();
+        const auto sha = head["sha"].toString();
+        if (author.isEmpty())
+            continue;
+        byNumber.insert(pull["number"].toInt(), author);
+        if (!sha.isEmpty())
+            byHead.insert(sha, {head["ref"].toString(), head["repo"].toObject()["id"].toVariant().toLongLong(), author});
+    }
+    for (auto &value : runs) {
+        auto run = value.toMap();
+        QStringList authors;
+        const auto numbers = run["pullNumbers"].toList();
+        for (const auto &number : numbers) {
+            const auto author = byNumber.value(number.toInt());
+            if (!author.isEmpty())
+                authors << author;
+        }
+        // Fork PR runs can have an empty pull_requests array. The commit is
+        // also how branch pushes are linked to their PR.
+        const auto event = run["event"].toString();
+        if (numbers.isEmpty() && (event == "pull_request" || event == "pull_request_target" ||
+                                  event == "push" || event == "workflow_dispatch")) {
+            const auto repositoryId = run["headRepositoryId"].toLongLong();
+            for (const auto &head : byHead.values(run["fullSha"].toString()))
+                if (head.branch == run["branch"] && (!repositoryId || !head.repositoryId || repositoryId == head.repositoryId))
+                    authors << head.author;
+        }
+        authors.removeDuplicates();
+        authors.sort(Qt::CaseInsensitive);
+        run["pullAuthors"] = authors;
+        value = run;
+    }
 }
 
 QString repoFromRemote(const QString &url) {
@@ -233,9 +299,20 @@ QVariantList builds(const QVariantList &runs) {
     QHash<QString, QVariantList> grouped;
     for (const auto &value : runs) {
         const auto run = value.toMap();
-        const auto key = isBuildEvent(run["event"].toString()) && !run["fullSha"].toString().isEmpty()
-                             ? run["fullSha"].toString()
-                             : QString("run:%1").arg(run["id"].toLongLong());
+        auto key = isBuildEvent(run["event"].toString()) && !run["fullSha"].toString().isEmpty()
+                       ? run["fullSha"].toString()
+                       : QString("run:%1").arg(run["id"].toLongLong());
+        const auto repository = run["repository"].toString();
+        if (!repository.isEmpty()) {
+            // pull_request_target runs carry the base commit, which different
+            // PRs can share. Group those runs by the linked PR as well.
+            if (run["event"] == "pull_request_target") {
+                const auto numbers = run["pullNumbers"].toList();
+                key += numbers.size() == 1 ? QString(":pull:%1").arg(numbers.first().toInt())
+                                           : QString(":run:%1").arg(run["id"].toLongLong());
+            }
+            key.prepend(repository + ':');
+        }
         if (!grouped.contains(key))
             order << key;
         grouped[key] << run;
@@ -254,10 +331,12 @@ QVariantList builds(const QVariantList &runs) {
         QVariantMap lead;
         QString started, ended;
         QStringList workflows;
+        QStringList pullAuthors;
         QVariantList ids;
         for (const auto &value : members) {
             const auto run = value.toMap();
             ids << run["id"];
+            pullAuthors << run["pullAuthors"].toStringList();
             const bool skipped = run["state"] == "skipped" && state != "skipped";
             if (skipped)
                 continue;
@@ -277,9 +356,14 @@ QVariantList builds(const QVariantList &runs) {
         }
         const bool active = isActive(state);
         const auto first = members.first().toMap();
+        pullAuthors.removeDuplicates();
+        pullAuthors.sort(Qt::CaseInsensitive);
         out << QVariantMap{
             {"key", key},
-            {"isBuild", !key.startsWith("run:")},
+            {"isBuild", isBuildEvent(first["event"].toString()) && !first["fullSha"].toString().isEmpty()},
+            {"repository", first["repository"].toString()},
+            {"defaultBranch", first["defaultBranch"].toString()},
+            {"pullAuthors", pullAuthors},
             {"sha", first["sha"]},
             {"fullSha", first["fullSha"]},
             {"title", lead["title"]},
