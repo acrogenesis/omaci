@@ -113,7 +113,7 @@ Every step is a way into the log. Click one, or press `N` and `P`, and the log s
 
 ## Following a running build
 
-In a repository, Omaci polls GitHub every 6 seconds while a build is running and once a minute when idle. Organizations refresh once a minute or more slowly for large organizations. Press `Space`, `R` or `Ctrl+R` to refresh. Omaci fetches the running job's log on each poll and appends new lines to keep your place.
+In a repository, Omaci polls GitHub every 6 seconds while a build is running and once a minute when idle. With a PR author filter, the organization refreshes once a minute. In the organization-wide view, Omaci rechecks repositories with active builds after 15 seconds, recently active repositories after a minute, and quiet repositories after 10 minutes. Pushes and workflow activity in the past 24 hours count as recent. The repository list is reused for five minutes, and workflow requests are sent in batches. Press `Space`, `R` or `Ctrl+R` to refresh all repositories in the view. Omaci fetches the running job's log on each poll and appends new lines to keep your place.
 
 It follows the end as long as you are at the end. Scroll up to read something and it stops, and a button in the corner brings it back, as does `End`. Scroll back down to the bottom and it follows again.
 

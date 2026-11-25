@@ -1456,6 +1456,62 @@ esac
         QVERIFY(backend.error().isEmpty());
         QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
     }
+
+    void reusesRepositoryListBetweenOrganizationBatches()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        QFile gh(temporary.filePath("gh"));
+        QVERIFY(gh.open(QIODevice::WriteOnly));
+        gh.write(R"(#!/bin/sh
+for path do :; done
+printf '%s\n' "$path" >> "$(dirname "$0")/requests"
+printf 'HTTP/1.1 200 OK\r\nETag: "fresh"\r\n\r\n'
+case "$path" in
+  orgs/batch-org/repos*)
+    printf '['
+    i=1
+    while [ "$i" -le 24 ]; do
+      printf '{"full_name":"batch-org/repo-%02d"},' "$i"
+      i=$((i + 1))
+    done
+    printf '%s\n' '{"full_name":"batch-org/new","pushed_at":"2024-01-01T09:00:00Z"},'
+    printf '%s\n' '{"full_name":"batch-org/archived","archived":true}]'
+    ;;
+  repos/batch-org/archived/?*) exit 1 ;;
+  repos/batch-org/?*/actions/runs*) printf '%s\n' '{"workflow_runs":[]}' ;;
+  *) exit 1 ;;
+esac
+)");
+        gh.close();
+        QVERIFY(gh.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+        const auto oldPath = qgetenv("PATH");
+        qputenv("PATH", temporary.path().toUtf8() + ':' + oldPath);
+        const auto restorePath = qScopeGuard([oldPath] { qputenv("PATH", oldPath); });
+        const auto requests = [&] {
+            QFile log(temporary.filePath("requests"));
+            return log.open(QIODevice::ReadOnly) ? log.readAll().trimmed().split('\n') : QList<QByteArray>{};
+        };
+
+        Backend backend("");
+        backend.show("org:batch-org");
+        QTRY_VERIFY(backend.organizationProgress().isEmpty());
+        QTRY_VERIFY(!backend.busy());
+        auto paths = requests();
+        QCOMPARE(paths.size(), 26);
+        QVERIFY(paths.first().startsWith("orgs/batch-org/repos?"));
+        QCOMPARE(paths.last(), QByteArray("repos/batch-org/repo-24/actions/runs?per_page=30"));
+        QVERIFY(paths.contains("repos/batch-org/new/actions/runs?per_page=30"));
+        QVERIFY(backend.error().isEmpty());
+
+        backend.refresh();
+        QTRY_VERIFY(backend.organizationProgress().isEmpty());
+        QTRY_VERIFY(!backend.busy());
+        paths = requests();
+        QCOMPARE(paths.size(), 52);
+        QVERIFY(paths[26].startsWith("orgs/batch-org/repos?"));
+        QVERIFY(backend.error().isEmpty());
+    }
 };
 
 QTEST_MAIN(OmaciTests)

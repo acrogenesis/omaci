@@ -183,16 +183,25 @@ private:
         int pending = 0;
         int failed = 0;
         int receivedRuns = 0;
+        bool force = false;
+        QString catalogError;
         QString firstError;
+    };
+    struct RepositoryActivity {
+        qint64 checkedAt = 0;
+        qint64 lastRun = 0;
+        bool active = false;
     };
     using RepositoryRuns = QHash<QString, QVariantList>;
 
     void gh(const QStringList &args, Done done);
     void pump();
     void api(const QString &path, Done done, const QString &projection = {});
+    void refreshRuns(bool force);
     void fetchOrganizationPage(int page);
     void fetchAuthoredRepositories();
-    void startOrganizationRuns();
+    void startOrganizationRuns(const QVariantList &repositories);
+    qint64 organizationRepositoryDue(const QVariantMap &repository, qint64 now) const;
     void fetchOrganizationRuns();
     void fetchOrganizationRepository(const QVariantMap &repository);
     void finishOrganizationRepository(const QString &repository, const QVariantList &runs,
@@ -278,6 +287,9 @@ private:
     bool m_orgMainOnly = false;
     quint64 m_orgPollId = 0;
     OrganizationPoll m_orgPoll;
+    QVariantList m_orgCatalog;
+    qint64 m_orgCatalogCheckedAt = 0;
+    QHash<QString, RepositoryActivity> m_orgActivity;
     RepositoryRuns m_orgRuns;
     RepositoryRuns m_orgAuthorRuns;
     bool m_showSkipped = false;
