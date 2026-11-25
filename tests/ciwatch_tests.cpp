@@ -1102,6 +1102,25 @@ private slots:
         QTest::keyClick(window, Qt::Key_N);
         QVERIFY(backend.selectedStep() >= 0);
         QVERIFY(backend.openUrl().contains("#step:"));
+        // It opens the step on its end, where the outcome is, at the bottom
+        // of the view, and stops following the log.
+        {
+            auto *log = window->findChild<QObject *>("log");
+            QVERIFY(log);
+            QVariant end;
+            QVERIFY(QMetaObject::invokeMethod(window, "stepEnd", Q_RETURN_ARG(QVariant, end),
+                                              Q_ARG(QVariant, backend.selectedStep())));
+            QVERIFY(end.toInt() > backend.steps()[backend.selectedStep()].toMap()["line"].toInt());
+            QVERIFY(!log->property("follow").toBool());
+            const auto lineAt = [log](qreal y) {
+                int index = -1;
+                QMetaObject::invokeMethod(log, "indexAt", Q_RETURN_ARG(int, index), Q_ARG(qreal, 20), Q_ARG(qreal, y));
+                return index;
+            };
+            const qreal top = log->property("contentY").toReal();
+            const qreal bottom = top + log->property("height").toReal() - 2;
+            QTRY_VERIFY(lineAt(top) <= end.toInt() && end.toInt() <= lineAt(bottom));
+        }
 
         // The failed pull request sits next to the main build before it, B goes there.
         QTRY_VERIFY(backend.previous()["ready"].toBool());

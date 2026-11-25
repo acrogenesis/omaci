@@ -129,18 +129,46 @@ ApplicationWindow {
         logView.positionViewAtIndex(Math.max(0, index - context), ListView.Beginning)
         logView.scripted = false
     }
+    // The last line a step wrote: the one before the next step that wrote
+    // anything begins, or the end of the log for the last one.
+    function stepEnd(index) {
+        const steps = backend.steps
+        const first = steps[index].line
+        for (let i = index + 1; i < steps.length; ++i)
+            if (steps[i].line > first) return steps[i].line - 1
+        return logView.count - 1
+    }
+    // A step opens on its end, at the bottom of the view, because that is
+    // where its outcome is: the summary of a test run, the error a command
+    // died on. A step still writing is followed as it grows.
+    function showStep(index) {
+        const step = backend.steps[index]
+        if (!step || step.line < 0) return
+        const last = win.stepEnd(index)
+        logView.highlighted = -1
+        followAnimation.stop()
+        if (step.state === "running" && last >= logView.count - 1) {
+            logView.follow = true
+            logView.toEnd(false)
+            return
+        }
+        logView.follow = false
+        logView.scripted = true
+        logView.positionViewAtIndex(last, ListView.End)
+        logView.scripted = false
+    }
     function jumpToStep(index) {
         const step = backend.steps[index]
         if (!step || step.line < 0) return
         win.focusPanel = "steps"
         backend.selectStep(index)
-        win.jumpToLine(step.line, 0)
+        win.showStep(index)
     }
     function moveStep(delta) {
         win.focusPanel = "steps"
         const from = backend.selectedStep >= 0 ? backend.selectedStep : logView.readingStep
         const index = backend.moveStep(delta > 0 ? from : (from < 0 ? backend.steps.length : from), delta)
-        if (index >= 0) win.jumpToLine(backend.steps[index].line, 0)
+        if (index >= 0) win.showStep(index)
     }
     property int failureIndex: -1
     function jumpToFailure(index) {
@@ -172,6 +200,7 @@ ApplicationWindow {
         else if (step === "tall") win.tall = true
         else if (step === "failure+") win.jumpToFailure(win.failureIndex + 1)
         else if (step === "step+") win.moveStep(1)
+        else if (step.startsWith("step:")) win.jumpToStep(parseInt(step.slice(5)))
         else if (step === "end") { logView.follow = true; logView.toEnd(false) }
         else if (step === "previous") backend.selectPrevious()
         else if (step === "back") backend.selectCameFrom()
@@ -794,6 +823,7 @@ ApplicationWindow {
 
                                 ListView {
                                     id: logView
+                                    objectName: "log"
                                     // Following means staying at the bottom as lines arrive.
                                     // Only a scroll the user makes decides it, by wheel, drag
                                     // or scrollbar: scrolled to the end follows, scrolled up
