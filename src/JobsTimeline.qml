@@ -8,6 +8,9 @@ Item {
     id: timeline
     property var jobs: []
     property var estimate: ({})
+    // The build main had before this one: where its jobs ran, and how long.
+    property var previous: ({})
+    readonly property bool compared: previous.ready === true
     property real selectedJobId: 0
     signal picked(real id)
 
@@ -19,7 +22,8 @@ Item {
 
     readonly property int rowHeight: 26
     readonly property int labelWidth: Math.max(150, Math.min(250, width * 0.2))
-    readonly property int figuresWidth: 150
+    readonly property int figuresWidth: compared ? 250 : 150
+    readonly property int wasWidth: 100
     readonly property real trackWidth: Math.max(50, width - labelWidth - figuresWidth - 16)
     readonly property real axis: Math.max(1, estimate.axis || 1) * 1.04
     readonly property bool active: estimate.active === true
@@ -48,6 +52,16 @@ Item {
         }
     }
 
+    Text {
+        visible: timeline.compared
+        anchors.right: parent.right
+        anchors.rightMargin: 16
+        y: 2
+        text: "before, on " + (timeline.previous.branch || "main")
+        color: theme.faint
+        font.pixelSize: 11
+    }
+
     Column {
         id: rows
         y: 22
@@ -60,6 +74,7 @@ Item {
                 required property var modelData
                 readonly property bool current: modelData.id === timeline.selectedJobId
                 readonly property var forecast: (timeline.estimate.jobs || {})[modelData.key] || ({})
+                readonly property var was: (timeline.previous.jobs || {})[modelData.key] || ({})
                 readonly property string jobState: modelData.state
                 readonly property bool started: modelData.start >= 0 && jobState !== "skipped"
                 readonly property bool running: jobState === "running"
@@ -134,6 +149,18 @@ Item {
                         color: Qt.rgba(theme.accent.r, theme.accent.g, theme.accent.b, 0.6)
                         Rectangle { anchors.right: parent.right; y: -3; width: 1; height: 7; color: parent.color; visible: parent.width > 2 }
                     }
+                    // Where the same job ran in the build before: a thin
+                    // line under the bar, on the same axis.
+                    Rectangle {
+                        visible: timeline.compared && row.was.thenEnd > 0
+                        x: timeline.px(row.was.thenStart)
+                        width: Math.max(2, timeline.px(row.was.thenEnd) - x)
+                        y: parent.height / 2 + 7
+                        height: 2
+                        radius: 1
+                        color: row.was.thenState === "failure" ? theme.bad : theme.dim
+                        opacity: 0.8
+                    }
                     // What happened.
                     Rectangle {
                         visible: row.started
@@ -149,9 +176,32 @@ Item {
                     }
                 }
 
+                // How long the job took in the build before, and whether
+                // that is a difference worth a colour.
                 Text {
+                    visible: timeline.compared
                     anchors.right: parent.right
                     anchors.rightMargin: 16
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    font.pixelSize: 12
+                    font.family: "monospace"
+                    color: row.was.verdict === "broke" ? theme.bad
+                         : row.was.verdict === "slower" ? theme.warn
+                         : row.was.verdict === "faster" || row.was.verdict === "fixed" ? theme.ok : theme.faint
+                    text: {
+                        const verdict = row.was.verdict || ""
+                        if (verdict === "new") return "new"
+                        if (verdict === "broke") return row.was.then >= 0 ? "passed, " + Format.duration(row.was.then) : "broke"
+                        if (verdict === "fixed") return "failed then"
+                        if (!(row.was.then >= 0)) return row.was.thenState === "skipped" ? "skipped" : ""
+                        const arrow = verdict === "slower" ? "▲ " : verdict === "faster" ? "▼ " : ""
+                        return arrow + Format.duration(row.was.then)
+                    }
+                }
+                Text {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 16 + (timeline.compared ? timeline.wasWidth + 20 : 0)
                     anchors.verticalCenter: parent.verticalCenter
                     textFormat: Text.PlainText
                     font.pixelSize: 12

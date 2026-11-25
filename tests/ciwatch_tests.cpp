@@ -12,6 +12,7 @@
 #include <QtTest>
 
 #include "backend.h"
+#include "compare.h"
 #include "demo.h"
 #include "estimate.h"
 #include "failures.h"
@@ -607,6 +608,99 @@ private slots:
         QCOMPARE(forecast.total, 112.0);   // Only build is left.
     }
 
+    // --- Next to the build before it ---
+
+    void thePreviousBuildIsTheLastFinishedOneOnMain()
+    {
+        const auto builds = GitHub::builds({
+            run(6, "running", "new6", 6000, 10),
+            run(5, "success", "pull5", 5000, 200, "Tests & Deploy", "feature", "pull_request"),
+            run(4, "running", "main4", 4500, 10),
+            run(3, "failure", "main3", 4000, 90),
+            run(2, "skipped", "main2", 3000, 1),
+            run(1, "success", "main1", 2000, 400),
+        });
+        // Not the pull request, not the one still running: the red one.
+        QCOMPARE(Compare::previous(builds, builds[0].toMap(), "main")["key"].toString(), QString("main3"));
+        // A pull request is compared with main as it was when it started.
+        QCOMPARE(Compare::previous(builds, builds[1].toMap(), "main")["key"].toString(), QString("main3"));
+        // Skipped builds did nothing to compare with.
+        QCOMPARE(Compare::previous(builds, builds[3].toMap(), "main")["key"].toString(), QString("main1"));
+        QVERIFY(Compare::previous(builds, builds[5].toMap(), "main").isEmpty());
+    }
+
+    void comparesEachJobWithTheSameJobBefore()
+    {
+        const QList<Estimate::Job> then{plain("test", "success", 10, 210), plain("build", "success", 10, 110),
+                                        plain("lint", "success", 5, 45), plain("deploy", "success", 215, 275),
+                                        plain("flaky", "failure", 10, 50)};
+        const QList<Estimate::Job> now{plain("test", "failure", 10, 90),    // broke
+                                       plain("build", "success", 10, 180),  // 70s slower
+                                       plain("lint", "success", 5, 47),     // two seconds is nothing
+                                       plain("deploy", "skipped", 95, 95),  // nothing to compare
+                                       plain("flaky", "success", 10, 30),   // fixed
+                                       plain("audit", "success", 5, 20)};   // wasn't there
+        const auto rows = Compare::jobs(now, then);
+        QCOMPARE(rows.size(), 6);
+        QCOMPARE(rows[0].verdict, QString("broke"));
+        QCOMPARE(rows[0].then, 200.0);
+        QCOMPARE(rows[1].verdict, QString("slower"));
+        QCOMPARE(rows[1].delta, 70.0);
+        QCOMPARE(rows[1].thenStart, 10.0);
+        QCOMPARE(rows[1].thenEnd, 110.0);
+        QCOMPARE(rows[2].verdict, QString("same"));
+        QCOMPARE(rows[3].verdict, QString());
+        QCOMPARE(rows[3].now, -1.0);
+        QCOMPARE(rows[4].verdict, QString("fixed"));
+        QCOMPARE(rows[5].verdict, QString("new"));
+        // The worst first: what broke, then what got slower.
+        QCOMPARE(Compare::notes(rows), QStringList({"test broke", "build 1m 10s slower", "flaky fixed"}));
+
+        // A job that is still running says nothing until it has outlasted the last time.
+        auto running = Compare::jobs({plain("test", "running", 10, 100)}, then);
+        QCOMPARE(running[0].verdict, QString());
+        running = Compare::jobs({plain("test", "running", 10, 260)}, then);
+        QCOMPARE(running[0].verdict, QString("slower"));
+        QCOMPARE(Compare::notes(running), QStringList({"test 50s slower"}));
+
+        QVERIFY(Compare::notable(120, 100));
+        QVERIFY(!Compare::notable(104, 100)); // Under five seconds.
+        QVERIFY(!Compare::notable(1100, 1000)); // Under fifteen percent.
+        QCOMPARE(Compare::jobs({plain("test", "success", 0, 60)}, {plain("test", "success", 0, 100)})[0].verdict,
+                 QString("faster"));
+    }
+
+    void backendComparesWithThePreviousMainBuildAndGoesThere()
+    {
+        Backend backend("owner/repo");
+        backend.setOffline(true);
+        backend.applyRuns({run(3, "failure", "pull3", 3000, 100, "Tests & Deploy", "feature", "pull_request"),
+                           run(2, "success", "main2", 2000, 300), run(1, "success", "main1", 1000, 280)});
+        QCOMPARE(backend.selectedKey(), QString("pull3"));
+        QCOMPARE(backend.previous()["key"].toString(), QString("main2"));
+        QCOMPARE(backend.previous()["seconds"].toInt(), 300);
+        QVERIFY(!backend.previous()["ready"].toBool()); // Its jobs aren't here yet.
+
+        backend.applyJobs(3, {job(30, "failure", "test", 3005, 60), job(31, "success", "build", 3005, 90)});
+        backend.applyJobs(2, {job(20, "success", "test", 2005, 200), job(21, "success", "build", 2005, 50)});
+        const auto previous = backend.previous();
+        QVERIFY(previous["ready"].toBool());
+        QCOMPARE(previous["notes"].toStringList(), QStringList({"test broke", "build 40s slower"}));
+        const auto build = previous["jobs"].toMap()["Tests & Deploy/build"].toMap();
+        QCOMPARE(build["verdict"].toString(), QString("slower"));
+        QCOMPARE(build["then"].toDouble(), 50.0);
+        QCOMPARE(build["thenStart"].toDouble(), 5.0);
+
+        // One press goes there, also when the list is narrowed to another branch.
+        backend.toggleBranch();
+        QCOMPARE(backend.branchFilter(), QString("feature"));
+        backend.selectPrevious();
+        QCOMPARE(backend.selectedKey(), QString("main2"));
+        QCOMPARE(backend.branchFilter(), QString());
+        // And from there, the one before that.
+        QCOMPARE(backend.previous()["key"].toString(), QString("main1"));
+    }
+
     // --- The backend ---
 
     void backendHidesSkippedAndSelectsFirst()
@@ -991,6 +1085,16 @@ private slots:
         QTest::keyClick(window, Qt::Key_N);
         QVERIFY(backend.selectedStep() >= 0);
         QVERIFY(backend.openUrl().contains("#step:"));
+
+        // The failed pull request sits next to the main build before it, B goes there.
+        QTRY_VERIFY(backend.previous()["ready"].toBool());
+        QVERIFY(backend.previous()["notes"].toStringList().contains("test broke"));
+        const auto failedKey = backend.selectedKey();
+        QTest::keyClick(window, Qt::Key_B);
+        QCOMPARE(backend.selectedKey(), backend.builds()[2].toMap()["key"].toString());
+        QCOMPARE(backend.selectedBuild()["branch"].toString(), QString("main"));
+        backend.selectBuild(failedKey);
+        QTRY_COMPARE(backend.failures().size(), 2);
 
         // L moves to the next job, Z makes the log tall, ? shows the help and Esc closes it.
         const auto before = backend.selectedJobId();

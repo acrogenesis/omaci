@@ -6,6 +6,7 @@ TEMPLATE = app
 
 HEADERS += \
     src/backend.h \
+    src/compare.h \
     src/demo.h \
     src/estimate.h \
     src/failures.h \
@@ -16,6 +17,7 @@ HEADERS += \
 SOURCES += \
     src/main.cpp \
     src/backend.cpp \
+    src/compare.cpp \
     src/demo.cpp \
     src/estimate.cpp \
     src/failures.cpp \

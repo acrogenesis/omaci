@@ -32,6 +32,7 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantList failures READ failures NOTIFY failuresChanged)
     Q_PROPERTY(QVariantMap estimate READ estimate NOTIFY estimateChanged)
     Q_PROPERTY(QVariantList history READ history NOTIFY historyChanged)
+    Q_PROPERTY(QVariantMap previous READ previous NOTIFY previousChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QDateTime lastUpdated READ lastUpdated NOTIFY buildsChanged)
@@ -60,6 +61,8 @@ public:
     QVariantList failures() const { return m_failures; }
     QVariantMap estimate() const { return m_estimate; }
     QVariantList history() const { return m_history; }
+    // The build main had before the picked one, and how the two compare.
+    QVariantMap previous() const { return m_previous; }
     QString error() const { return m_error; }
     bool busy() const { return m_running > 0; }
     QDateTime lastUpdated() const { return m_lastUpdated; }
@@ -75,6 +78,7 @@ public:
     Q_INVOKABLE void selectBuild(const QString &key);
     Q_INVOKABLE void selectJob(qlonglong id);
     Q_INVOKABLE void selectStep(int index);
+    Q_INVOKABLE void selectPrevious();
     Q_INVOKABLE void moveBuild(int delta);
     Q_INVOKABLE void moveJob(int delta);
     // The next step, counted from `from`, that has a place in the log; makes
@@ -110,6 +114,7 @@ signals:
     void failuresChanged();
     void estimateChanged();
     void historyChanged();
+    void previousChanged();
     void errorChanged();
     void busyChanged();
     void buildFinished(const QVariantMap &build);
@@ -141,6 +146,9 @@ private:
     void fetchLog();
     void rebuildJobs();
     void computeEstimate();
+    void computePrevious();
+    void fetchDefaultBranch();
+    QString baseBranch() const;
     void annotateLog();
     void pickJob();
     void clearJob();
@@ -190,6 +198,9 @@ private:
     QVariantList m_failures;
 
     QVariantMap m_estimate;
+    QVariantMap m_previous;
+    QString m_defaultBranch;
+    QString m_defaultBranchOf;
     QVariantList m_history;
     QString m_error;
     QDateTime m_lastUpdated;

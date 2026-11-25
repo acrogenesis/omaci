@@ -138,7 +138,9 @@ QList<Job> plan(const Build &build, bool linting) {
 
     const int changes = add("changes", 4, 9);
     const int test = add("test", 16, failed ? 152 : std::round(268 * p), failed ? "failure" : "success");
-    const int image = add("build", 16, std::round(186 * p));
+    // The pull request that failed also changed the Dockerfile, so its image
+    // was built without the cache: something for the comparison to find.
+    const int image = add("build", 16, std::round(186 * p * (build.number == 13 ? 1.34 : 1.0)));
     const int cucumber = add("cucumber", 20, std::round(301 * p));
     jobs[changes].steps = stepsOf(jobs[changes], {{"Set up job", 1}, {"Check out the code", 4}},
                                   "Look for changes to the Rails app", {}, {"Post Check out the code", "Complete job"});
@@ -444,6 +446,8 @@ QByteArray respond(const QString &path, const QDateTime &started) {
         return log(parts.value(parts.size() - 2).toLongLong());
     if (bare.endsWith("/jobs"))
         return jobs(parts.value(parts.size() - 2).toLongLong());
+    if (parts.size() == 3 && parts.value(0) == "repos")
+        return QJsonDocument(QJsonObject{{"default_branch", "main"}}).toJson(QJsonDocument::Compact);
     const auto query = path.section('?', 1);
     QString sha;
     for (const auto &pair : query.split('&'))

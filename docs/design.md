@@ -77,6 +77,16 @@ Two separate things were wrong, and they are fixed separately.
 
 A failed job opens with the first failure two lines below the top of the log, so the whole block is in view under it. The lines of a failure have a red edge, so they are findable while scrolling. The panel above the log names each failure and where it is (`spec/requests/admin/orders_spec.rb:107`); click one to go there, `E` and `Shift+E` walk them.
 
+## Next to the build before it
+
+"Is this slow, or is it always like this" and "did this break it, or was it already broken" are both questions about the build before. So every build is shown next to the one main had before it: the newest finished build on the default branch that started earlier. Whatever its result, because a main that was already red is exactly what you want to know before blaming a pull request. A pull request is compared with main too, not with its own previous push, since main is what it will be merged into.
+
+It shows in three places. A row under the bar names that build, how it ended, how long it took and how long ago, then says what changed in a few words, the worst first ("test broke, build 1m 9s slower"), and is itself the way there: click it or press `B`. On the timeline every job has a thin line under its bar where the same job ran last time, on the same axis, so slower and later are visible without reading a number. And a column on the right gives the job's time then, with an arrow up in yellow when it is slower now, an arrow down in green when faster, and "passed, 4m 20s" in red next to a job that fails now and did not then.
+
+The rules are in `src/compare.cpp`. A job broke when it fails now and did not before, and is fixed the other way round. Two times differ when they are more than five seconds and more than fifteen percent apart; less than that is the runner's mood and gets no colour. A job that is still running says nothing until it has outlasted its last time. The whole build is compared only when both passed.
+
+Which branch is "main" is asked from GitHub once per repository (`default_branch`); until the answer is in, `main` or `master` is taken. The jobs of the previous build are one request per run, once, and often already there because the forecast uses the same builds.
+
 ## Handing it over
 
 `C`, or the "Copy link" button, copies the URL of the picked job, `https://github.com/owner/repo/actions/runs/<run>/job/<job>`, or the run's when no job is picked. A toast shows what was copied.
@@ -97,6 +107,7 @@ Every one of these is also something to click.
 | `Y` | copy the failure, with the link, for an agent |
 | `Shift+C` | copy the whole log |
 | `O` / `Enter` | open the job on GitHub |
+| `B` | the build main had before this one |
 | `Z` | give the whole height to the log, and back |
 | `F` | only the branch of this build, and back to all |
 | `S` | show or hide skipped builds |
@@ -111,6 +122,7 @@ Every one of these is also something to click.
 - **The list of runs**: one request a poll, a hundred runs at a time, which is about thirty-five builds of history. Sent with the `ETag` of the last answer, and GitHub does not count a "not modified" answer against the hourly budget, so an idle minute usually costs nothing.
 - **The jobs** of the build you are looking at: one request per run that is still going (usually one or two), also conditional. A finished run's jobs are fetched once and kept for as long as the window is open.
 - **The log** of the picked job while it runs: one request a poll. This is the one that always counts.
+- **The build before**: the jobs of the previous build on main, a request per run, once per build you look at, and which branch is the default, one request per repository.
 - **History for the estimate**: the jobs of the last six like builds, about a dozen requests, once, and only when the build you are looking at is running.
 
 Polling is every 6 seconds while a build is running and once a minute otherwise. A running build costs at most 600 counted requests an hour for its log, plus the jobs requests that actually changed (a few per step), against 5000. At most four `gh` processes run at a time.

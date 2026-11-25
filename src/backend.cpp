@@ -4,10 +4,13 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
 
+#include "compare.h"
 #include "demo.h"
 #include "github.h"
 
@@ -173,11 +176,39 @@ void Backend::api(const QString &path, Done done) {
     });
 }
 
+// Which branch "main" is here, asked once per repository. Until the answer
+// is in, and when it never comes, main or master is taken for it.
+void Backend::fetchDefaultBranch() {
+    if (m_defaultBranchOf == m_repo)
+        return;
+    m_defaultBranchOf = m_repo;
+    const auto repo = m_repo;
+    api(QString("repos/%1").arg(m_repo), [this, repo](bool ok, const QByteArray &out, const QString &) {
+        m_kept.remove(QString("repos/%1").arg(repo));
+        if (!ok || repo != m_repo)
+            return;
+        m_defaultBranch = QJsonDocument::fromJson(out).object().value("default_branch").toString();
+        rebuildJobs();
+        fetchJobs();
+    });
+}
+
+QString Backend::baseBranch() const {
+    if (!m_defaultBranch.isEmpty())
+        return m_defaultBranch;
+    for (const auto &name : {"main", "master"})
+        for (const auto &build : m_allBuilds)
+            if (build.toMap()["branch"] == name)
+                return name;
+    return selectedBuild()["branch"].toString();
+}
+
 void Backend::refresh() {
     if (m_fetchingRuns)
         return;
     m_fetchingRuns = true;
     m_poll.stop();
+    fetchDefaultBranch();
     const auto repo = m_repo;
     // A hundred runs is about thirty-five builds: the list, and the history
     // the forecast is made from, in one request.
@@ -365,6 +396,13 @@ void Backend::fetchJobs() {
             continue;
         fetchRunJobs(id, !GitHub::isActive(state), run["updatedAt"].toString());
     }
+    // The jobs of the build main had before this one, to compare with. It
+    // is finished, so this is asked once.
+    for (const auto &run : Compare::previous(m_allBuilds, build, baseBranch())["runs"].toList()) {
+        const auto id = run.toMap()["id"].toLongLong();
+        if (run.toMap()["state"] != "skipped" && !m_jobsOfRun.value(id).final)
+            fetchRunJobs(id, true, run.toMap()["updatedAt"].toString());
+    }
     // The jobs of earlier builds, for the forecast. Only a build that is
     // still going needs one.
     if (GitHub::isActive(build["state"].toString())) {
@@ -508,6 +546,7 @@ void Backend::rebuildJobs() {
         return (x < 0 ? 1e12 : x) < (y < 0 ? 1e12 : y);
     });
 
+    computePrevious();
     computeEstimate();
 
     auto jobs = m_realJobs;
@@ -537,6 +576,86 @@ void Backend::rebuildJobs() {
         active ? m_tick.start() : m_tick.stop();
 }
 
+// The picked build next to the one main had before it.
+void Backend::computePrevious() {
+    const auto build = selectedBuild();
+    const auto before = build.isEmpty() ? QVariantMap{} : Compare::previous(m_allBuilds, build, baseBranch());
+    QVariantMap map;
+    if (!before.isEmpty()) {
+        const auto origin = GitHub::ms(build["startedAt"].toString());
+        const auto thenOrigin = GitHub::ms(before["startedAt"].toString());
+        const bool active = GitHub::isActive(build["state"].toString());
+        const double elapsed = qMax(0.0, (QDateTime::currentMSecsSinceEpoch() - origin) / 1000.0);
+
+        QList<Estimate::Job> now, then;
+        for (const auto &value : m_realJobs) {
+            const auto job = value.toMap();
+            Estimate::Job entry;
+            entry.key = job["key"].toString();
+            entry.state = job["state"].toString();
+            entry.start = job["start"].toDouble();
+            entry.end = entry.state == "running" ? elapsed : job["end"].toDouble();
+            now << entry;
+        }
+        bool ready = true;
+        for (const auto &runValue : before["runs"].toList()) {
+            const auto run = runValue.toMap();
+            if (run["state"] == "skipped")
+                continue;
+            const auto kept = m_jobsOfRun.value(run["id"].toLongLong());
+            ready = ready && kept.final;
+            for (const auto &jobValue : kept.jobs) {
+                const auto job = jobValue.toMap();
+                Estimate::Job entry;
+                entry.key = jobKey(job, run);
+                entry.state = job["state"].toString();
+                entry.start = offset(job["startedAt"].toString(), thenOrigin);
+                entry.end = offset(job["completedAt"].toString(), thenOrigin);
+                then << entry;
+            }
+        }
+        const auto rows = ready ? Compare::jobs(now, then) : QList<Compare::Row>{};
+        QVariantMap perJob;
+        double reach = 0;
+        for (const auto &row : rows) {
+            perJob[row.key] = QVariantMap{{"then", row.then},           {"thenState", row.thenState},
+                                          {"thenStart", row.thenStart}, {"thenEnd", row.thenEnd},
+                                          {"delta", row.delta},         {"verdict", row.verdict}};
+            reach = qMax(reach, row.thenEnd);
+        }
+        map = QVariantMap{{"key", before["key"]},
+                          {"title", before["title"]},
+                          {"sha", before["sha"]},
+                          {"branch", before["branch"]},
+                          {"state", before["state"]},
+                          {"seconds", before["seconds"]},
+                          {"startedAt", before["startedAt"]},
+                          {"ready", ready},
+                          {"jobs", perJob},
+                          {"reach", reach},
+                          {"notes", Compare::notes(rows)},
+                          // How the whole build compares, once it is done.
+                          {"delta", active ? 0.0 : build["seconds"].toDouble() - before["seconds"].toDouble()},
+                          {"notable", !active && Compare::notable(build["seconds"].toDouble(), before["seconds"].toDouble())}};
+    }
+    if (map != m_previous) {
+        m_previous = map;
+        emit previousChanged();
+    }
+}
+
+void Backend::selectPrevious() {
+    const auto key = m_previous["key"].toString();
+    if (key.isEmpty())
+        return;
+    // It has to be in the list to be picked.
+    if (!m_branch.isEmpty() && m_previous["branch"] != m_branch) {
+        m_branch.clear();
+        filterBuilds();
+    }
+    selectBuild(key);
+}
+
 void Backend::computeEstimate() {
     const auto build = selectedBuild();
     QVariantMap map;
@@ -564,6 +683,8 @@ void Backend::computeEstimate() {
     double axis = elapsed;
     for (const auto &job : m_realJobs)
         axis = qMax(axis, job.toMap()["end"].toDouble());
+    // Room for where the same jobs ran in the build before, drawn under them.
+    axis = qMax(axis, qMin(m_previous["reach"].toDouble(), axis * 2.5));
 
     QVariantMap perJob;
     QVariantList expected;
@@ -824,6 +945,7 @@ void Backend::show(const QString &repo, const QString &sha) {
         m_extraRuns.clear();
         m_allBuilds.clear();
         m_jobsOfRun.clear();
+        m_defaultBranch.clear();
         m_kept.clear();
         m_branch.clear();
         m_key.clear();

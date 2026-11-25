@@ -56,6 +56,16 @@ It is done three times, with every job quick, usual and slow, and the quick and 
 
 A finished build keeps the bar, now showing whether it was faster or slower than usual.
 
+## Next to the build before it
+
+<img src="screenshots/compare.png" width="800" alt="A failed pull request next to the main build before it: a row says that build passed in 6m 33s and that test broke and build is 1m 9s slower, every job has a thin line under its bar where it ran last time, and a column gives each job's earlier time">
+
+Under the bar is the build main had before this one: what it was, how it ended, how long it took, and in a few words what is different now, the worst first: "test broke, build 1m 9s slower". Click that row or press `B` to go to it.
+
+On the timeline every job has a thin line under its bar where the same job ran in that build, so slower and later show without reading a number, and the column on the right has the time it took then. An arrow up in yellow is slower now, an arrow down in green is faster, and a job that fails now but passed then says so in red. Differences under five seconds or fifteen percent get no colour, because runners are never exactly as fast twice.
+
+It is main also when you look at a pull request, because main is what the pull request gets merged into, and it is the previous build whatever its result: a main that was already red is worth knowing before blaming your branch.
+
 ## The jobs, in time
 
 Every job is a row on the same time axis. Solid is what happened, hollow is what is still expected, the thin line with a cap is how much longer it takes when the job is slow, and the vertical line is now. One look says which job the build is waiting for. On the right is how long the job has run and how long it usually does. Jobs that were skipped share one line at the bottom.
@@ -116,6 +126,7 @@ Every one of these is also something you can click.
 | `Y` | copy the failure and its link |
 | `Shift+C` | copy the whole log |
 | `O` / `Enter` | open the job on GitHub |
+| `B` | the build main had before this one |
 | `Z` | tall log, and back |
 | `F` | only the branch of this build, and back |
 | `S` | show or hide skipped builds |
@@ -132,7 +143,7 @@ GitHub allows 5000 requests an hour per user, shared with everything else that u
 
 The list of runs is one request a poll, and so are the jobs of each run of your build that is still going. Both are sent with the `ETag` of the previous answer, and GitHub does not count the "nothing changed" it then usually sends back, so those only cost something when a run or a step actually moved. The log of the running job is one request a poll and always counts: about 600 an hour while you watch a build. A finished run's jobs are fetched once and kept for as long as the window is open.
 
-The estimate needs the jobs of the last six builds like yours, about a dozen requests, once, and only when the build you are looking at is running. With nothing running, the app sends one request a minute, which mostly costs nothing either.
+The comparison needs the jobs of the previous build on main, a request or two, once per build you look at. The estimate needs the jobs of the last six builds like yours, about a dozen requests, once, and only when the build you are looking at is running. With nothing running, the app sends one request a minute, which mostly costs nothing either.
 
 ## It follows the theme
 
@@ -160,7 +171,7 @@ bin/test      # the Qt tests, offscreen
 bin/install   # build/ciwatch, as a package
 ```
 
-The tests cover the estimate, the step-to-line mapping and the failure detection (against the log of a real failed job, with what could identify the project replaced), the link that is copied, and the window itself, driven by its keys on the demo data.
+The tests cover the estimate, the comparison with the build before, the step-to-line mapping and the failure detection (against the log of a real failed job, with what could identify the project replaced), the link that is copied, and the window itself, driven by its keys on the demo data.
 
 `ciwatch --demo --screenshot shot.png` draws the window into a file without opening it, which is how the pictures here were made. `--scene build+,help` walks it somewhere first, and `--theme <directory>` reads the colours from somewhere other than the current Omarchy theme.
 

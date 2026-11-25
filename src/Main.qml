@@ -152,6 +152,7 @@ ApplicationWindow {
         else if (step === "failure+") win.jumpToFailure(win.failureIndex + 1)
         else if (step === "step+") win.moveStep(1)
         else if (step === "end") { logView.follow = true; logView.toEnd(false) }
+        else if (step === "previous") backend.selectPrevious()
     }
 
     Shortcut { sequence: "?"; onActivated: win.helpVisible = !win.helpVisible }
@@ -174,6 +175,7 @@ ApplicationWindow {
     Shortcut { sequence: "Shift+C"; onActivated: { backend.copyLog(); toast.show("Copied the whole log") } }
     Shortcut { sequences: ["O", "Return"]; onActivated: win.openOnGitHub() }
     Shortcut { sequence: "Z"; onActivated: win.tall = !win.tall }
+    Shortcut { sequence: "B"; onActivated: backend.selectPrevious() }
     Shortcut { sequence: "F"; onActivated: backend.toggleBranch() }
     Shortcut { sequence: "S"; onActivated: backend.toggleSkipped() }
     Shortcut { sequence: "PgDown"; onActivated: win.scrollLogBy(1) }
@@ -485,6 +487,79 @@ ApplicationWindow {
                             }
                         }
                     }
+
+                    // The build main had before this one, to compare with,
+                    // and the way to it.
+                    Rectangle {
+                        id: previousRow
+                        readonly property var was: backend.previous
+                        visible: was.key !== undefined
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 30
+                        radius: 5
+                        color: previousMouse.containsMouse ? theme.raised : theme.panel
+                        border.width: 1
+                        border.color: theme.line
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            spacing: 8
+                            Text { text: "Before, on " + (previousRow.was.branch || ""); textFormat: Text.PlainText; color: theme.dim; font.pixelSize: 12 }
+                            StatusIcon { state: previousRow.was.state || "queued"; size: 13 }
+                            Text {
+                                Layout.maximumWidth: previousRow.width * 0.3
+                                text: previousRow.was.title || ""
+                                textFormat: Text.PlainText
+                                color: theme.text
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                textFormat: Text.PlainText
+                                color: theme.dim
+                                font.pixelSize: 12
+                                text: {
+                                    const was = previousRow.was
+                                    if (!was.key) return ""
+                                    win.now
+                                    const verb = ({ "success": "passed in ", "failure": "failed after ", "cancelled": "cancelled after " })[was.state] || "took "
+                                    return verb + Format.duration(was.seconds) + "  ·  " + win.ago(was.startedAt)
+                                }
+                            }
+                            // What changed since: the job that broke, the
+                            // ones that got slower, the whole build.
+                            Text {
+                                Layout.fillWidth: true
+                                textFormat: Text.PlainText
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                                readonly property var notes: previousRow.was.notes || []
+                                readonly property bool alarming: notes.some(note => note.endsWith(" broke"))
+                                color: alarming ? theme.bad : notes.some(note => note.endsWith(" slower")) ? theme.warn : theme.dim
+                                text: {
+                                    const was = previousRow.was
+                                    if (!was.key) return ""
+                                    if (!was.ready) return "·  fetching its jobs…"
+                                    const parts = notes.slice(0, 3)
+                                    if (was.notable && win.build.state === "success" && was.state === "success")
+                                        parts.unshift("this build " + Format.duration(Math.abs(was.delta)) + (was.delta > 0 ? " slower" : " faster"))
+                                    if (parts.length === 0 && backend.jobs.length > 0) return "·  no job stands out"
+                                    return parts.length ? "·  " + parts.join(", ") : ""
+                                }
+                            }
+                            Text { text: "Go to it"; color: theme.text; font.pixelSize: 12 }
+                            Text { text: "B"; color: theme.dim; font.pixelSize: 11; font.family: win.mono }
+                        }
+                        MouseArea {
+                            id: previousMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: backend.selectPrevious()
+                        }
+                    }
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: theme.line; visible: !win.tall }
 
@@ -503,6 +578,7 @@ ApplicationWindow {
                         width: parent.width
                         jobs: backend.jobs
                         estimate: win.estimate
+                        previous: backend.previous
                         selectedJobId: backend.selectedJobId
                         onPicked: id => backend.selectJob(id)
                     }
@@ -1007,6 +1083,7 @@ ApplicationWindow {
                         ["Y", "Copy the failure and its link"],
                         ["Shift+C", "Copy the whole log"],
                         ["O / Enter", "Open the job on GitHub"],
+                        ["B", "The build main had before this one"],
                         ["Z", "Tall log, and back"],
                         ["F", "Only this branch, and back"],
                         ["S", "Show or hide skipped builds"],
