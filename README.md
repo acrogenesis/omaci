@@ -35,7 +35,7 @@ omaci org:basecamp                     # watch a GitHub organization
 
 Started without a target, Omaci opens the current checkout or the last repository or organization you watched. On the first launch outside a checkout, it opens the picker. Press `G` to reopen it. Type to narrow the list (`acme api` finds `acme/storefront-api`) and use the arrows and Enter to pick. You can type a full `owner/name` directly or enter `org:name` to watch an organization.
 
-The organization view combines the 30 latest workflow runs per accessible, non-archived, enabled repository. Each build shows its repository. Press `U` or click **PR author** and enter a GitHub username to see builds linked to that user's pull requests. Omaci uses PR numbers and matching PR head commits from the 100 most recently updated pull requests in each repository. Older runs can be absent from the filtered view when GitHub provides no matching PR reference. Submit an empty field or click **Clear filter** to see all builds again. Omaci remembers the filter for each organization.
+The organization view combines the 30 latest workflow runs per accessible, non-archived, enabled repository. Each build shows its repository. Press `U` or click **PR author** and enter a GitHub username. Omaci looks up that user's 100 most recently updated pull requests in the organization and checks the latest 100 workflow runs in each repository found. Builds are matched by PR number or current PR head commit and appear as repositories are checked. Older runs can be absent from the filtered view when GitHub provides no matching PR reference. Submit an empty field or click **Clear filter** to see all builds again. Omaci remembers the filter for each organization.
 
 There is only ever one window. Starting Omaci again hands the target and any commit to the open window and brings it to the front.
 
@@ -159,7 +159,7 @@ Every one of these is also something you can click.
 
 GitHub allows 5000 requests an hour per user, shared with everything else that uses your `gh` login.
 
-Polling needs one request per repository for workflow runs and one for pull requests when the author filter is active. The organization view also checks which repositories are accessible. These requests and the running jobs are sent with the previous response's `ETag`, so an unchanged response typically costs nothing. The running job's log always counts as a request. A finished run's jobs are kept in memory.
+Polling needs one request per repository for workflow runs. The organization view lists repositories or looks up recent pull requests when the author filter is active. Workflow run and job requests are sent with the previous response's `ETag`, so an unchanged response typically costs nothing. The running job's log always counts as a request. A finished run's jobs are kept in memory.
 
 The menu of repositories is one request per hundred repositories, when you open it, and again at most every five minutes.
 

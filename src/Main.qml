@@ -365,7 +365,8 @@ ApplicationWindow {
                 Layout.preferredWidth: Math.round(Math.max(34, Math.min(42, win.width / win.cw * 0.23)) * win.cw)
                 Layout.fillHeight: true
                 title: "builds"
-                note: [backend.branchFilter ? "only " + backend.branchFilter : "", backend.runningOnly ? "running" : ""].filter(part => part).join(" · ")
+                note: backend.organizationProgress
+                    || [backend.branchFilter ? "only " + backend.branchFilter : "", backend.runningOnly ? "running" : ""].filter(Boolean).join(" · ")
                 corner: backend.builds.length ? (backend.selectedIndex + 1) + "/" + backend.builds.length : ""
                 focused: win.focusPanel === "builds"
 
@@ -502,10 +503,12 @@ ApplicationWindow {
 
                     Mono {
                         anchors.centerIn: parent
-                        visible: buildList.count === 0 && (backend.loadingPullAuthors || !isNaN(backend.lastUpdated.getTime()))
-                        text: backend.loadingPullAuthors ? "loading PR authors…"
-                            : backend.runningOnly && backend.activeCount === 0 ? "nothing is running right now"
+                        visible: buildList.count === 0 && backend.organizationProgress === "" && !isNaN(backend.lastUpdated.getTime())
+                        text: backend.runningOnly && backend.pullAuthor ? "no running builds for @" + backend.pullAuthor
+                            : backend.runningOnly ? "nothing is running right now"
                             : backend.pullAuthor ? "no builds for @" + backend.pullAuthor : "no builds match this filter"
+                        width: Math.min(implicitWidth, parent.width - win.cw * 2)
+                        elide: Text.ElideRight
                         color: theme.dim
                     }
                 }

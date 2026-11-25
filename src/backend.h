@@ -21,7 +21,7 @@ class Backend : public QObject {
     Q_PROPERTY(QString repo READ repo NOTIFY repoChanged)
     Q_PROPERTY(QString organization READ organization NOTIFY repoChanged)
     Q_PROPERTY(QString pullAuthor READ pullAuthor NOTIFY buildsChanged)
-    Q_PROPERTY(bool loadingPullAuthors READ loadingPullAuthors NOTIFY buildsChanged)
+    Q_PROPERTY(QString organizationProgress READ organizationProgress NOTIFY organizationProgressChanged)
     Q_PROPERTY(QVariantList builds READ builds NOTIFY buildsChanged)
     Q_PROPERTY(QString selectedKey READ selectedKey NOTIFY selectionChanged)
     Q_PROPERTY(int selectedIndex READ selectedIndex NOTIFY selectionChanged)
@@ -63,7 +63,7 @@ public:
     QString repo() const { return m_repo; }
     QString organization() const { return m_repo.startsWith("org:") ? m_repo.mid(4) : QString(); }
     QString pullAuthor() const { return m_pullAuthor; }
-    bool loadingPullAuthors() const { return !m_pullAuthor.isEmpty() && !m_orgAuthorsLoaded && m_fetchingRuns; }
+    QString organizationProgress() const;
     QVariantList builds() const { return m_builds; }
     QString selectedKey() const { return m_key; }
     int selectedIndex() const;
@@ -157,6 +157,7 @@ signals:
     void previousChanged();
     void errorChanged();
     void busyChanged();
+    void organizationProgressChanged();
     void repositoriesChanged();
     void buildFinished(const QVariantMap &build);
 
@@ -178,21 +179,27 @@ private:
     struct OrganizationPoll {
         QVariantList repositories;
         qsizetype next = 0;
+        qsizetype published = 0;
         int pending = 0;
         int failed = 0;
         int receivedRuns = 0;
-        bool withAuthors = false;
         QString firstError;
     };
+    using RepositoryRuns = QHash<QString, QVariantList>;
 
     void gh(const QStringList &args, Done done);
     void pump();
     void api(const QString &path, Done done, const QString &projection = {});
     void fetchOrganizationPage(int page);
+    void fetchAuthoredRepositories();
+    void startOrganizationRuns();
     void fetchOrganizationRuns();
     void fetchOrganizationRepository(const QVariantMap &repository);
     void finishOrganizationRepository(const QString &repository, const QVariantList &runs,
                                       const QString &error, bool receivedRuns);
+    void failOrganizationPoll(const QString &error);
+    void publishOrganizationRuns();
+    RepositoryRuns &organizationRuns();
     void rebuild();
     void filterBuilds();
     void fetchCommit();
@@ -269,9 +276,10 @@ private:
     QString m_branch;
     QString m_pullAuthor;
     bool m_orgMainOnly = false;
-    bool m_orgAuthorsLoaded = false;
+    quint64 m_orgPollId = 0;
     OrganizationPoll m_orgPoll;
-    QHash<QString, QVariantList> m_orgRuns;
+    RepositoryRuns m_orgRuns;
+    RepositoryRuns m_orgAuthorRuns;
     bool m_showSkipped = false;
     bool m_runningOnly = false;
     QVariantList m_repositories;

@@ -160,7 +160,44 @@ QVariantList parseRepositories(const QByteArray &json, QString *error) {
     return repositories;
 }
 
-void attachPullAuthors(QVariantList &runs, const QByteArray &json, QString *error) {
+QVariantList parseAuthoredRepositories(const QByteArray &json, const QString &author, QString *error) {
+    const auto data = QJsonDocument::fromJson(json).object().value("data").toObject();
+    const auto search = data.value("search").toObject();
+    const auto result = search.value("nodes");
+    if (!result.isArray()) {
+        *error = "GitHub sent an invalid response to the PR author search.";
+        return {};
+    }
+    QVariantList repositories;
+    QHash<QString, qsizetype> indexes;
+    for (const auto &value : result.toArray()) {
+        const auto pull = value.toObject();
+        const auto repo = pull["repository"].toObject();
+        const auto name = repo["nameWithOwner"].toString();
+        const auto login = pull["author"].toObject()["login"].toString();
+        if (name.isEmpty() || login.compare(author, Qt::CaseInsensitive) != 0 ||
+            repo["isArchived"].toBool() || repo["isDisabled"].toBool())
+            continue;
+        if (!indexes.contains(name)) {
+            indexes.insert(name, repositories.size());
+            repositories << QVariantMap{{"name", name},
+                                        {"defaultBranch", repo["defaultBranchRef"].toObject()["name"].toString()}};
+        }
+        auto &item = repositories[indexes.value(name)];
+        auto repository = item.toMap();
+        auto pulls = repository["pullRequests"].toList();
+        pulls << QVariantMap{{"number", pull["number"].toInt()},
+                             {"login", login},
+                             {"headSha", pull["headRefOid"].toString()},
+                             {"headBranch", pull["headRefName"].toString()},
+                             {"headRepositoryId", pull["headRepository"].toObject()["databaseId"].toVariant().toLongLong()}};
+        repository["pullRequests"] = pulls;
+        item = repository;
+    }
+    return repositories;
+}
+
+void attachPullAuthors(QVariantList &runs, const QVariantList &pullRequests) {
     struct PullHead {
         QString branch;
         qlonglong repositoryId;
@@ -168,16 +205,15 @@ void attachPullAuthors(QVariantList &runs, const QByteArray &json, QString *erro
     };
     QHash<int, QString> byNumber;
     QMultiHash<QString, PullHead> byHead;
-    for (const auto &value : parseList(json, "pull requests", error)) {
-        const auto pull = value.toObject();
-        const auto author = pull["user"].toObject()["login"].toString();
-        const auto head = pull["head"].toObject();
-        const auto sha = head["sha"].toString();
+    for (const auto &value : pullRequests) {
+        const auto pull = value.toMap();
+        const auto author = pull["login"].toString();
+        const auto sha = pull["headSha"].toString();
         if (author.isEmpty())
             continue;
         byNumber.insert(pull["number"].toInt(), author);
         if (!sha.isEmpty())
-            byHead.insert(sha, {head["ref"].toString(), head["repo"].toObject()["id"].toVariant().toLongLong(), author});
+            byHead.insert(sha, {pull["headBranch"].toString(), pull["headRepositoryId"].toLongLong(), author});
     }
     for (auto &value : runs) {
         auto run = value.toMap();

@@ -184,10 +184,10 @@ private slots:
             {"id":4,"event":"schedule","head_sha":"commit","head_branch":"topic","actor":{"login":"alice"}},
             {"id":5,"event":"push","head_sha":"commit","head_branch":"main","head_repository":{"id":4}}
         ]})");
-        GitHub::attachPullAuthors(runs, R"([
-            {"number":11,"user":{"login":"alice"},"head":{"sha":"commit","ref":"topic","repo":{"id":4}}},
-            {"number":12,"user":{"login":"bob"},"head":{"sha":"commit","ref":"topic","repo":{"id":5}}}
-        ])");
+        GitHub::attachPullAuthors(runs, {
+            QVariantMap{{"number", 11}, {"login", "alice"}, {"headSha", "commit"}, {"headBranch", "topic"}, {"headRepositoryId", 4}},
+            QVariantMap{{"number", 12}, {"login", "bob"}, {"headSha", "commit"}, {"headBranch", "topic"}, {"headRepositoryId", 5}}
+        });
         QCOMPARE(runs.size(), 5);
         QCOMPARE(runs[0].toMap()["pullAuthors"].toStringList(), QStringList{"alice"});
         QCOMPARE(runs[1].toMap()["pullAuthors"].toStringList(), QStringList{"bob"});
@@ -1354,6 +1354,12 @@ case "$path" in
     user/repos*) printf '%s\n' '[{"full_name":"acme/alpha","owner":{"type":"Organization","login":"acme"}}]'; exit ;;
     repos/acme/alpha/actions/jobs/201/logs) printf '%s\n' 'alpha job output'; exit ;;
     repos/acme/beta/actions/jobs/202/logs) printf '%s\n' 'beta job output'; exit ;;
+    "search=org:acme is:pr author:ALICE archived:false sort:updated-desc")
+        cat <<'EOF'
+{"data":{"search":{"nodes":[{"number":10,"author":{"login":"alice"},"repository":{"nameWithOwner":"acme/alpha","defaultBranchRef":{"name":"main"}}},{"number":10,"author":{"login":"morgan"},"repository":{"nameWithOwner":"acme/beta","defaultBranchRef":{"name":"trunk"}}}]}}}
+EOF
+        exit
+        ;;
 esac
 printf 'HTTP/1.1 200 OK\r\nETag: "fresh"\r\n\r\n'
 case "$path" in
@@ -1363,6 +1369,7 @@ EOF
     ;;
     repos/acme/alpha/actions/runs/101/jobs*) printf '%s\n' '{"jobs":[{"id":201,"run_id":101,"name":"alpha checks","status":"completed","conclusion":"success"}]}' ;;
     repos/acme/beta/actions/runs/102/jobs*) printf '%s\n' '{"jobs":[{"id":202,"run_id":102,"name":"beta checks","status":"completed","conclusion":"success"}]}' ;;
+    'repos/acme/beta/actions/runs?per_page=100') printf '%s\n' 'Beta should be excluded from the author lookup' >&2; exit 1 ;;
     repos/acme/alpha/actions/runs*) cat <<'EOF'
 {"workflow_runs":[{"id":101,"name":"CI","display_title":"Alpha PR","head_branch":"topic","head_sha":"1234567","event":"pull_request","status":"completed","conclusion":"success","actor":{"login":"morgan"},"repository":{"id":11},"pull_requests":[{"number":10,"base":{"repo":{"id":11}}}],"created_at":"2026-11-25T09:00:00Z","updated_at":"2026-11-25T09:00:30Z"}]}
 EOF
@@ -1371,8 +1378,6 @@ EOF
 {"workflow_runs":[{"id":102,"name":"CI","display_title":"Beta PR","head_branch":"trunk","head_sha":"1234567","event":"pull_request","status":"completed","conclusion":"success","actor":{"login":"alice"},"head_repository":{"id":22},"created_at":"2026-11-25T09:01:00Z","updated_at":"2026-11-25T09:01:30Z"}]}
 EOF
     ;;
-    repos/acme/alpha/pulls*) printf '%s\n' '[{"number":10,"user":{"login":"alice"}}]' ;;
-    repos/acme/beta/pulls*) printf '%s\n' '[{"number":10,"user":{"login":"morgan"},"head":{"sha":"1234567","ref":"trunk","repo":{"id":22}}}]' ;;
     *) printf 'Unexpected request: %s\n' "$path" >&2; exit 1 ;;
 esac
 )");
@@ -1402,6 +1407,8 @@ esac
         QTest::keyClick(window, Qt::Key_Return);
         QTRY_COMPARE(backend.organization(), QString("acme"));
         QTRY_COMPARE(backend.builds().size(), 2);
+        QCOMPARE(backend.builds().first().toMap()["repository"].toString(), QString("acme/beta"));
+        backend.selectBuild(backend.builds().first().toMap()["key"].toString());
         QCOMPARE(backend.selectedBuild()["repository"].toString(), QString("acme/beta"));
         QCOMPARE(backend.mainBranch(), QString("trunk"));
         QTRY_COMPARE(backend.selectedJobId(), 202LL);
@@ -1426,6 +1433,12 @@ esac
         QTRY_COMPARE(backend.log()->text(), QString("alpha job output"));
         QCOMPARE(backend.shareUrl(), QString("https://github.com/acme/alpha/actions/runs/101/job/201"));
         QVERIFY(backend.previous().isEmpty());
+        QTRY_VERIFY(backend.organizationProgress().isEmpty());
+        QVERIFY(backend.error().isEmpty());
+        QTest::keyClick(window, Qt::Key_A);
+        QVERIFY(backend.runningOnly());
+        QVERIFY(backend.builds().isEmpty());
+        QTest::keyClick(window, Qt::Key_A);
         Backend reopened("");
         reopened.setOffline(true);
         reopened.show("");
@@ -1438,6 +1451,8 @@ esac
         QTest::keyClick(window, Qt::Key_Return);
         QTRY_VERIFY(backend.pullAuthor().isEmpty());
         QCOMPARE(backend.builds().size(), 2);
+        QTRY_VERIFY(backend.organizationProgress().isEmpty());
+        QTRY_VERIFY(!backend.busy());
         QVERIFY(backend.error().isEmpty());
         QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
     }
