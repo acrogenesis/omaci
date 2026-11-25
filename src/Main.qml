@@ -11,7 +11,9 @@ ApplicationWindow {
     minimumWidth: 980
     minimumHeight: 600
     visible: true
-    title: "CI Watch · " + backend.repo
+    // The answer in the title too, where the compositor and the window
+    // switcher show it without the window being in front.
+    title: "CI Watch · " + backend.repo + (win.buildActive && win.headline ? " · " + win.headline : "")
     color: theme.background
 
     Material.theme: theme.light ? Material.Light : Material.Dark
@@ -85,7 +87,8 @@ ApplicationWindow {
         if (e.late)
             return Format.duration(e.elapsed) + " so far, " + Format.duration(e.over) + " over the usual"
         if (e.basis === "jobs")
-            return "Ends between " + Format.duration(e.low) + " and " + Format.duration(e.high)
+            return (e.usualKnown ? "Usually " + Format.duration(e.usual) + "  ·  this one " : "This one ")
+                 + "between " + Format.duration(e.low) + " and " + Format.duration(e.high)
                  + ", going by the jobs of the last " + e.samples + " builds like it"
         return usually + ", going by " + e.samples + " earlier builds"
     }
@@ -447,9 +450,8 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Text {
                                     text: win.buildActive ? Format.duration(win.estimate.elapsed || 0) + " so far" : ""
-                                    color: theme.dim
+                                    color: theme.text
                                     font.pixelSize: 12
-                                    font.family: win.mono
                                 }
                                 Text {
                                     Layout.fillWidth: true

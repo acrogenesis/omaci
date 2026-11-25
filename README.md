@@ -1,12 +1,12 @@
 # CI Watch for Omarchy
 
-<img src="screenshots/demo.webp" width="800" alt="CI Watch following a running build: new lines slide into the log as they come in, then a failed run opens on its red error line, and back on the running build the log follows the end again">
+<img src="screenshots/running.png" width="800" alt="CI Watch on a running build: about 3m 20s left in large type, a bar with the usual finish marked on it, the earlier builds as small bars, the jobs as a timeline with a line at now, and under that the steps and the log of the test job">
 
-The GitHub Actions of one repository, live, in a window of their own. The runs on the left, the jobs and steps of the one you picked in the middle, and its log on the right, growing at the bottom while the job is still running.
+The builds of one repository, live, in a window of their own. How far the build is and about how long it still has, worked out from how long the earlier ones took. Its jobs on a timeline, the steps of the one you picked, and its log, growing at the bottom while the job is still running.
 
-A bar widget can tell you that a build is red. It cannot tell you why, and finding out means a browser tab, three clicks into GitHub's Actions page, and a log viewer that loads a few thousand lines into a web page and scrolls them like one. This is the other half: open the build and the failing job is already selected, with the log scrolled to the first error.
+A bar widget can tell you that a build is red. It cannot tell you why, and finding out means a browser tab, three clicks into GitHub's Actions page, and a log viewer that loads a few thousand lines into a web page and scrolls them like one. This is the other half: open the build and the failing job is already selected, with the log on the test that failed rather than on the exit code that came after it, and one key copies the link to hand to somebody else.
 
-It is a native Qt Quick app, built and installed the way Omarchy's own apps are. New lines slide into the log and the view glides along with them, the running dots pulse, and the accent follows your Omarchy theme as you switch it.
+It is a native Qt Quick app, built and installed the way Omarchy's own apps are. New lines slide into the log and the view glides along with them, the running marks turn, and the colours follow your Omarchy theme as you switch it, the light ones too.
 
 ## Install
 
@@ -27,70 +27,122 @@ Omarchy, which already ships everything the build needs: Qt 6, `qmake6` and a co
 ```bash
 ciwatch                                  # wbso-ai/application, the one I watch
 ciwatch basecamp/omarchy                 # any other
-ciwatch basecamp/omarchy --sha 4f1c2ab   # only the runs of one commit
+ciwatch basecamp/omarchy --sha 4f1c2ab   # open on the build of one commit
 ```
 
 There is only ever one window. Starting it again while it is open hands the repository and commit over to that window and brings it to the front, rather than opening a second one next to it.
 
+With `--sha` the build of that commit is the one selected, and the others stay in the list around it, because they are what the estimate is made from. A commit too old to be among the latest builds is looked up by its sha, which has to be the whole one for that.
+
 ## With GitHub Build Monitor
 
-The [GitHub Build Monitor](https://github.com/jankeesvw/omarchy-github-build-monitor) bar widget opens a build here when you press Enter on it, as long as CI Watch is installed. You get the runs of that commit, with the one that failed or is still going selected. `g` in the widget still opens the build on GitHub.
+The [GitHub Build Monitor](https://github.com/jankeesvw/omarchy-github-build-monitor) bar widget opens a build here when you press Enter on it, as long as CI Watch is installed. `g` in the widget still opens the build on GitHub.
 
-## Reading the window
+## What counts as a build
 
-<img src="screenshots/failure.png" width="800" alt="A failed run selected: the test job is red, its Run the tests step is red, and the log ends in the failing test and the error line, highlighted">
+A commit, not a workflow run, the same as in the widget. One push starts several workflows and they finish minutes apart, so every run that a push, a pull request or a dispatch started for a commit is rolled into one row: running while any of them is, red when any of them failed, and as long as the wait from the first run starting to the last one ending. Their jobs are one list.
+
+Runs started by something else, a schedule or a comment on an issue, attach to the head of the branch as well. Counting those in would stretch a four minute build to half a day because a nightly job ran on the same commit, so each of them is an entry of its own.
+
+Builds in which everything was skipped are hidden, because a repository with an issue bot has more of those than builds. `S` shows them. `F` narrows the list to the branch of the build you are on, and back.
+
+## How long it will still take
+
+The largest text in the window is the answer: "About 3m 20s left". Under it is one bar. The filled part is the time gone, the tick is where a build like this usually ends, and the band around the tick is how far apart the earlier ones ended, so you see what the estimate is worth along with the estimate. Next to it are those earlier builds, one small bar each, as tall as the build was long and coloured by how it ended. Point at one for its name and its time, click it to go there.
+
+The estimate comes from builds that passed, on the same branch when there are at least three of those, otherwise from builds started the same way, so a pull request is compared with other pull requests, which do not deploy. From the last six of them the app takes the jobs: how long each one usually runs, and which jobs had always finished before it began. Then it plays this build forward. A running job ends at its start plus its usual length, a job that has not started begins when the ones it waits for are done, and the build ends when the last job does. That is how the timeline can show a `deploy` that GitHub has not created yet, drawn hollow where it will be.
+
+It is done three times, with every job quick, usual and slow, and the quick and slow answers are the band on the bar. The number is rounded to what it can be trusted to and always says "about". With fewer than three earlier builds there is no guess: the bar becomes a moving stripe and the text says how long the build has been going. A build that has outlasted its estimate says "Taking longer than usual", in yellow, with how far over it is, rather than sitting at zero.
+
+A finished build keeps the bar, now showing whether it was faster or slower than usual.
+
+## The jobs, in time
+
+Every job is a row on the same time axis. Solid is what happened, hollow is what is still expected, the thin line with a cap is how much longer it takes when the job is slow, and the vertical line is now. One look says which job the build is waiting for. On the right is how long the job has run and how long it usually does. Jobs that were skipped share one line at the bottom.
+
+Pick a build and the job worth looking at is already selected: the one that failed, otherwise the one that is running, otherwise the last one that did any work. While a build is going, the selection moves along to whichever job is running now, until you pick one yourself.
 
 | | |
 |---|---|
-| Pulsing dot | running |
-| Open circle | queued, or skipped when it is grey |
+| Turning ring | running |
+| Open circle | queued |
+| Dotted circle | expected, going by earlier builds, but not created yet |
 | Green check | passed |
 | Red cross | failed, timed out, or never started |
 | Grey dash | cancelled, which is what GitHub does to a run a newer push replaced |
+| Struck circle | skipped |
 
-Pick a run and the job worth looking at is already selected: the one that failed, otherwise the one that is running, otherwise the last one that did any work. While a run is going, the selection moves along to whichever job is running now, until you pick one yourself.
+## When a build fails
 
-In the log, groups are in the accent colour, commands are blue, warnings yellow and errors red. A failed job opens on its first error, and `E` walks to the next one.
+<img src="screenshots/failure.png" width="800" alt="A failed build selected: the test job is red on the timeline, its RSpec tests step is red, a panel above the log names the two failed examples with their files, and the log shows the Failures section from its first line">
 
-Runs that were skipped are hidden, because a repository with an issue bot has more of those than builds. `S` shows them.
+The runner's own error line, "Process completed with exit code 1.", is the last line of a failed step and says nothing. What the test runner printed says everything, and with tests running in parallel it can sit a hundred lines higher, behind the summaries of the processes that passed. CI Watch reads the failed step for what test runners print: RSpec's `Failures:` section and its `rspec ./spec/…` lines, Cucumber's `Failing Scenarios:`, Minitest's `Failure:` blocks, pytest's `FAILED`, Jest's `●`, Go's `--- FAIL:`, and error annotations that name a file. The exit code line is only where it lands when none of those are there.
+
+A failed job opens with the first failure at the top of the log, and a panel above the log names each one with its file and line. Click one to go there. `E` and `Shift+E` walk through them. The lines of a failure have a red edge, so they are easy to find again while scrolling.
+
+Every step is a way into the log. Click one, or press `N` and `P`, and the log goes to where that step begins. The log has a heading at each of those places, and while you scroll, the step you are reading is the one marked in the list. Steps that were skipped wrote nothing and cannot be clicked.
+
+## Handing it to somebody else
+
+`C`, or the Copy link button, copies the address of the job you are on, `https://github.com/owner/repo/actions/runs/…/job/…`, or the run's when the build has no jobs yet. That is the thing to paste to a coding agent.
+
+`Y` copies the failure itself: a line saying which job and step failed, in which repository and on which commit, the link, and the text of the failure as the test runner printed it. `Shift+C` copies the whole log. `O` opens the job on GitHub, on the step you picked if you picked one.
 
 ## Following a running build
 
 While anything is running, CI Watch asks GitHub every 6 seconds; when everything is done, once a minute, and right away when you press `Space`, `R` or `Ctrl+R`. The log of a running job is fetched again on every poll, and when it only grew, the new lines are added to the bottom rather than the whole log being replaced, so the view keeps its place.
 
-It follows the end as long as you are at the end. Scroll up to read something and it stops, and a button in the corner says `End` brings it back. Scroll back down to the bottom and it follows again.
+It follows the end as long as you are at the end. Scroll up to read something and it stops, and a button in the corner brings it back, as does `End`. Scroll back down to the bottom and it follows again.
 
 GitHub only publishes a job's log once the runner has uploaded the first part of it, so a job that just started shows its steps for a few seconds before it has a log.
 
-When a run you saw running finishes, you get a desktop notification saying whether it passed. Runs that were already done when the window opened stay quiet.
+When a build you saw running finishes, you get a desktop notification saying whether it passed and how long it took. Builds that were already done when the window opened stay quiet. The time left is in the window's title as well, so the window switcher shows it.
+
+`Z` gives the whole height to the log, and `Z` or `Esc` brings the build back.
 
 ## Keyboard
 
+Every one of these is also something you can click.
+
 | Key | Does |
 | --- | --- |
-| `J` / `↓` | next run |
-| `K` / `↑` | previous run |
+| `J` / `↓` | next build |
+| `K` / `↑` | previous build |
 | `L` / `→` / `Tab` | next job |
 | `H` / `←` / `Shift+Tab` | previous job |
-| `E` | next error in the log |
+| `N` / `P` | next, previous step in the log |
+| `E` / `Shift+E` | next, previous failure |
+| `C` | copy the link of the job |
+| `Y` | copy the failure and its link |
+| `Shift+C` | copy the whole log |
+| `O` / `Enter` | open the job on GitHub |
+| `Z` | tall log, and back |
+| `F` | only the branch of this build, and back |
+| `S` | show or hide skipped builds |
 | `PgUp` / `PgDn` | scroll the log |
 | `Home` / `End` | top of the log / back to following the end |
-| `C` | copy the log |
-| `O` / `Enter` | open the job on GitHub |
-| `F` | cycle through the workflows, one at a time |
-| `S` | show or hide skipped runs |
-| `Esc` | back to all runs after opening one commit |
 | `Space` / `R` / `Ctrl+R` | refresh now |
+| `Esc` | close the help, or leave the tall log |
 | `?` | every shortcut, in the window |
 | `Q` | quit |
 
 ## What it costs
 
-Three requests a poll while something runs (the runs, the jobs of the selected run, and the log of the selected job), so around 1800 an hour, and one request a minute when nothing does. A finished run's jobs and log are fetched once and not again. GitHub allows 5000 requests an hour per user, shared with everything else that uses your `gh` login.
+GitHub allows 5000 requests an hour per user, shared with everything else that uses your `gh` login.
+
+The list of runs is one request a poll, and so are the jobs of each run of your build that is still going. Both are sent with the `ETag` of the previous answer, and GitHub does not count the "nothing changed" it then usually sends back, so those only cost something when a run or a step actually moved. The log of the running job is one request a poll and always counts: about 600 an hour while you watch a build. A finished run's jobs are fetched once and kept for as long as the window is open.
+
+The estimate needs the jobs of the last six builds like yours, about a dozen requests, once, and only when the build you are looking at is running. With nothing running, the app sends one request a minute, which mostly costs nothing either.
+
+## It follows the theme
+
+<img src="screenshots/light.png" width="800" alt="The same running build on a light theme, with a blue accent">
+
+The whole palette, live: background, text, accent, and the theme's own green, red and yellow for passed, failed and late. Without Omarchy it is dark with a yellow accent.
 
 ## Privacy
 
-Nothing is written to disk. Runs, jobs and logs live in memory while the window is open and are gone when it closes. The only things that leave the app are the `gh api` calls to GitHub and a `notify-send` when a run finishes. Log lines are drawn as plain text, so nothing in a log can make the window load anything.
+Nothing is written to disk. Builds, jobs and logs live in memory while the window is open and are gone when it closes. The only things that leave the app are the `gh api` calls to GitHub and a `notify-send` when a build finishes. Log lines are drawn as plain text, so nothing in a log can make the window load anything.
 
 ## Trying it without GitHub
 
@@ -98,7 +150,7 @@ Nothing is written to disk. Runs, jobs and logs live in memory while the window 
 ciwatch --demo
 ```
 
-Invented runs for an invented `acme/storefront`: a build running with a log that grows, one that failed, and a few that passed. The screenshots above are that.
+Invented builds for an invented `acme/storefront`: one running, with a log that grows and a deploy still to come, one that failed in two tests, and a dozen earlier ones to estimate from. It really runs: leave it open for a few minutes and the build deploys and passes. The screenshots above are that.
 
 ## Building
 
@@ -107,6 +159,12 @@ bin/build     # build/ciwatch
 bin/test      # the Qt tests, offscreen
 bin/install   # build/ciwatch, as a package
 ```
+
+The tests cover the estimate, the step-to-line mapping and the failure detection (against the log of a real failed job, with what could identify the project replaced), the link that is copied, and the window itself, driven by its keys on the demo data.
+
+`ciwatch --demo --screenshot shot.png` draws the window into a file without opening it, which is how the pictures here were made. `--scene build+,help` walks it somewhere first, and `--theme <directory>` reads the colours from somewhere other than the current Omarchy theme.
+
+How it is put together, and why, is in [docs/design.md](docs/design.md).
 
 ## Removing
 

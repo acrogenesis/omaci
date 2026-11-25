@@ -1,4 +1,5 @@
 import QtQuick
+import "format.js" as Format
 
 // The earlier builds like this one, oldest on the left, one bar each: as tall
 // as the build was long, coloured by how it ended. The last bar is this
@@ -14,7 +15,8 @@ Item {
     readonly property real tallest: {
         let most = Math.max(currentSeconds, typical, 1)
         for (const build of builds) most = Math.max(most, build.seconds)
-        return most
+        // One build that took an hour mustn't flatten the others into a line.
+        return typical > 0 ? Math.min(most, Math.max(typical * 2, currentSeconds)) : most
     }
     readonly property real slot: Math.max(5, Math.min(16, Math.floor((width + 3) / Math.max(1, builds.length))))
 
@@ -34,7 +36,7 @@ Item {
                 Rectangle {
                     anchors.bottom: parent.bottom
                     width: parent.width
-                    height: Math.max(3, Math.round(parent.height * parent.seconds / strip.tallest))
+                    height: Math.max(3, Math.min(parent.height, Math.round(parent.height * parent.seconds / strip.tallest)))
                     radius: Math.min(2, width / 2)
                     opacity: modelData.current || area.containsMouse ? 1 : 0.75
                     color: modelData.current && (modelData.state === "running" || modelData.state === "queued") ? theme.accent
@@ -49,7 +51,9 @@ Item {
                     anchors.margins: -1
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onContainsMouseChanged: strip.hovered = containsMouse ? modelData.title : ""
+                    onContainsMouseChanged: strip.hovered = !containsMouse ? ""
+                        : modelData.title + "  ·  " + (modelData.current && strip.currentSeconds > 0 && !modelData.seconds
+                            ? "running" : Format.duration(modelData.seconds) + ", " + ({ "success": "passed", "failure": "failed", "cancelled": "cancelled" }[modelData.state] || modelData.state))
                     onClicked: strip.picked(modelData.key)
                 }
             }

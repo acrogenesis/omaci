@@ -298,7 +298,14 @@ void Backend::schedule() {
 
 // A commit older than the latest hundred runs is asked for by its sha.
 void Backend::fetchCommit() {
-    if (m_wantCommit.size() != 40 || m_commitFetched == m_wantCommit)
+    if (!m_wantCommit.isEmpty() && m_wantCommit.size() != 40) {
+        // The API only finds a commit's runs by its whole sha.
+        setError(QString("Commit %1 isn't among the latest builds. Pass the whole sha to find an older one.")
+                     .arg(m_wantCommit));
+        m_wantCommit.clear();
+        return;
+    }
+    if (m_wantCommit.isEmpty() || m_commitFetched == m_wantCommit)
         return;
     m_commitFetched = m_wantCommit;
     const auto repo = m_repo;
@@ -783,14 +790,15 @@ void Backend::moveBuild(int delta) {
 }
 
 void Backend::moveJob(int delta) {
-    if (m_realJobs.isEmpty())
+    // Through the jobs that have something to show; a skipped one doesn't.
+    QList<qlonglong> ids;
+    for (const auto &job : m_realJobs)
+        if (job.toMap()["state"] != "skipped")
+            ids << job.toMap()["id"].toLongLong();
+    if (ids.isEmpty())
         return;
-    int index = 0;
-    for (int i = 0; i < m_realJobs.size(); ++i)
-        if (m_realJobs[i].toMap()["id"].toLongLong() == m_jobId)
-            index = i;
-    index = (index + delta + m_realJobs.size()) % m_realJobs.size();
-    selectJob(m_realJobs[index].toMap()["id"].toLongLong());
+    const int index = qMax<int>(0, ids.indexOf(m_jobId));
+    selectJob(ids[(index + delta + ids.size()) % ids.size()]);
 }
 
 int Backend::moveStep(int from, int delta) {

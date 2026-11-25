@@ -1,12 +1,12 @@
 pkgname=ciwatch
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
-pkgdesc='Live GitHub Actions status and logs for one repository'
+pkgdesc='The builds of one repository, live: how far, how long still, and what failed'
 arch=('x86_64' 'aarch64')
 license=('MIT')
 depends=('qt6-base' 'qt6-declarative' 'qt6-wayland')
 optdepends=('github-cli: talks to GitHub (any gh on PATH or in mise works too)'
-            'libnotify: desktop notifications when a run finishes')
+            'libnotify: desktop notifications when a build finishes')
 makedepends=('gcc' 'make')
 source=()
 sha256sums=()

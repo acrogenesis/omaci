@@ -12,6 +12,7 @@
 #include <QtTest>
 
 #include "backend.h"
+#include "demo.h"
 #include "estimate.h"
 #include "failures.h"
 #include "github.h"
@@ -904,6 +905,32 @@ private slots:
         // Surfaces sit between the background and the text.
         QVERIFY(theme.panel().lightnessF() < QColor("#eff1f5").lightnessF());
         QVERIFY(theme.panel().lightnessF() > theme.dim().lightnessF());
+    }
+
+    // --- The demo ---
+
+    void theDemoBuildReallyRunsDeploysAndPasses()
+    {
+        auto jobsAt = [](int secondsAfterStart) {
+            // The demo's running build began 192 seconds before the app did.
+            const auto started = QDateTime::currentDateTimeUtc().addSecs(192 - secondsAfterStart);
+            const auto build = GitHub::builds(GitHub::parseRuns(Demo::respond("repos/acme/storefront/actions/runs?per_page=100", started)))
+                                   .first().toMap();
+            QVariantMap states{{"build", build["state"]}};
+            for (const auto &job : GitHub::parseJobs(Demo::respond("repos/acme/storefront/actions/runs/9028/jobs", started)))
+                states[job.toMap()["name"].toString()] = job.toMap()["state"];
+            return states;
+        };
+        auto states = jobsAt(200);
+        QCOMPARE(states["build"].toString(), QString("running"));
+        QCOMPARE(states["test"].toString(), QString("running"));
+        QVERIFY(!states.contains("deploy")); // GitHub creates it when the others are done.
+        states = jobsAt(360);
+        QCOMPARE(states["test"].toString(), QString("success"));
+        QCOMPARE(states["deploy"].toString(), QString("running"));
+        states = jobsAt(600);
+        QCOMPARE(states["build"].toString(), QString("success"));
+        QCOMPARE(states["deploy"].toString(), QString("success"));
     }
 
     // --- The window ---

@@ -11,6 +11,12 @@ Item {
     property real selectedJobId: 0
     signal picked(real id)
 
+    // Skipped jobs did nothing and have no log, so they share one line at
+    // the bottom instead of taking a row each; unless they are all there is.
+    readonly property var skipped: jobs.filter(job => job.state === "skipped")
+    readonly property var shown: skipped.length === jobs.length ? jobs : jobs.filter(job => job.state !== "skipped")
+    readonly property bool skippedLine: skipped.length > 0 && skipped.length < jobs.length
+
     readonly property int rowHeight: 26
     readonly property int labelWidth: Math.max(150, Math.min(250, width * 0.2))
     readonly property int figuresWidth: 150
@@ -20,7 +26,7 @@ Item {
     readonly property real elapsed: estimate.elapsed || 0
     readonly property int tickStep: Format.tickStep(axis, Math.max(3, Math.floor(trackWidth / 70)))
 
-    implicitHeight: 22 + rows.implicitHeight
+    implicitHeight: 22 + rows.implicitHeight + (skippedLine ? 22 : 0)
 
     function px(seconds) { return Math.max(0, Math.min(1, seconds / axis)) * trackWidth }
 
@@ -31,7 +37,7 @@ Item {
             required property int index
             x: timeline.labelWidth + timeline.px(index * timeline.tickStep)
             height: timeline.height
-            Rectangle { y: 20; width: 1; height: parent.height - 20; color: theme.line; opacity: 0.6 }
+            Rectangle { y: 20; width: 1; height: rows.implicitHeight + 2; color: theme.line; opacity: 0.6 }
             Text {
                 x: index === 0 ? 0 : -width / 2
                 y: 2
@@ -48,7 +54,7 @@ Item {
         width: parent.width
 
         Repeater {
-            model: timeline.jobs
+            model: timeline.shown
             delegate: Rectangle {
                 id: row
                 required property var modelData
@@ -172,13 +178,27 @@ Item {
         }
     }
 
+    Text {
+        visible: timeline.skippedLine
+        x: 38
+        y: 22 + rows.implicitHeight
+        width: parent.width - 54
+        height: 22
+        verticalAlignment: Text.AlignVCenter
+        text: "Skipped: " + timeline.skipped.map(job => job.name).join(", ")
+        textFormat: Text.PlainText
+        color: theme.faint
+        font.pixelSize: 12
+        elide: Text.ElideRight
+    }
+
     // Now.
     Rectangle {
         visible: timeline.active
         x: timeline.labelWidth + timeline.px(timeline.elapsed)
         y: 16
         width: 1
-        height: parent.height - 16
+        height: 6 + rows.implicitHeight
         color: theme.text
         Behavior on x { NumberAnimation { duration: 1000 } }
         Rectangle {
