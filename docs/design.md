@@ -160,6 +160,5 @@ Nothing is written to disk but the name of the repository watched last, so a win
 - Reading the workflow file for the real `needs:` graph. The order is inferred from earlier builds instead, which costs nothing and is wrong only for the first builds after a workflow changes shape.
 - The run's log archive as a source of exact step boundaries.
 - Keeping the logs of finished jobs: going back to a job fetches its log again.
-- A new animated picture for the README. The pictures are stills from the offscreen renderer; `screenshots/social.png` still shows the old window.
 - Translations, which the Omarchy app template has and this app never did.
 - Following a change of Hyprland's rounding or of the text size the moment it happens: both are read at start and again when the theme changes, not from Hyprland's event socket.

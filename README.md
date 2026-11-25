@@ -1,6 +1,6 @@
 # Omaci
 
-<img src="screenshots/running.png" width="800" alt="Omaci on a running build: about 3m 20s left in large type, a bar with the usual finish marked on it, the earlier builds as small bars, the jobs as a timeline with a line at now, and under that the steps and the log of the test job">
+<img src="screenshots/demo.gif" width="800" alt="Omaci on an Omarchy desktop: a running build with about 3m 20s left and its log growing, then the build that failed, opened on its two failing tests, back to the running one, another job, and the menu of repositories narrowed down by typing">
 
 The builds of one repository, live, in a window of their own. How far the build is and about how long it still has, worked out from how long the earlier ones took. Its jobs on a timeline, the steps of the one you picked, and its log, growing at the bottom while the job is still running.
 
@@ -30,6 +30,8 @@ omaci basecamp/omarchy                 # any other
 omaci basecamp/omarchy --sha 4f1c2ab   # open on the build of one commit
 ```
 
+<img src="screenshots/repositories.png" width="800" alt="The menu of repositories over the window: a field to type in, then every repository with its description and when it was last pushed, the one being watched on top and an archived one at the bottom">
+
 Started without one, from the launcher say, it opens on the repository of the directory it was started in, and outside a checkout on the one you watched last. The first time, when there is no last one, it opens on a menu of every repository your `gh` login can see, the most recently pushed first, and `G` brings that menu up whenever you want another. Typing narrows it (`acme api` finds `acme/storefront-api`), the arrows and Enter pick, and a whole `owner/name` that isn't yours, a public repository of somebody else's, can be opened as typed.
 
 There is only ever one window. Starting it again while it is open hands the repository and commit over to that window and brings it to the front, rather than opening a second one next to it.
@@ -51,6 +53,8 @@ Runs started by something else, a schedule or a comment on an issue, attach to t
 Builds in which everything was skipped are hidden, because a repository with an issue bot has more of those than builds. `S` shows them. The bar at the top has the filters, each with a box that is filled while it is on: `M` keeps only the builds of main (or whatever the default branch is called), `F` only the branch of the build you are on, `A` only the builds that are running or waiting for a runner, and `S` shows the skipped ones too. Click a filter or press its key to flip it. With `A` on, the build you are looking at stays in the list when it finishes, so it doesn't disappear at the moment it has news; the next one you pick replaces it.
 
 ## How long it will still take
+
+<img src="screenshots/running.png" width="800" alt="Omaci on a running build: about 3m 20s left in large type, a bar with the usual finish marked on it, the earlier builds as small bars, the jobs as a timeline with a line at now, and under that the steps and the log of the test job">
 
 The largest text in the window is the answer: "About 3m 20s left". Under it is one bar. The filled part is the time gone, the tick is where a build like this usually ends, and the band around the tick is how far apart the earlier ones ended, so you see what the estimate is worth along with the estimate. Next to it are those earlier builds as a sparkline, one character each, as tall as the build was long and coloured by how it ended. Point at one for its name and its time, click it to go there.
 
@@ -185,7 +189,7 @@ bin/install   # build/omaci, as a package
 
 The tests cover the estimate, the comparison with the build before, the step-to-line mapping and the failure detection (against the log of a real failed job, with what could identify the project replaced), the link that is copied, and the window itself, driven by its keys on the demo data.
 
-`omaci --demo --screenshot shot.png` draws the window into a file without opening it, which is how the pictures here were made. `--scene build+,help` walks it somewhere first, and `--theme <directory>` reads the colours from somewhere other than the current Omarchy theme.
+`omaci --demo --screenshot shot.png` draws the window into a file without opening it, which is how the pictures here were made. The moving one at the top is `omaci --demo` in a fresh Omarchy VM, recorded with `wf-recorder`. `--scene build+,help` walks it somewhere first, and `--theme <directory>` reads the colours from somewhere other than the current Omarchy theme.
 
 How it is put together, and why, is in [docs/design.md](docs/design.md).
 
