@@ -654,7 +654,7 @@ ApplicationWindow {
                             MouseArea {
                                 id: previousMouse
                                 anchors.fill: parent
-                                enabled: previousRow.was.matchesAuthor || false
+                                enabled: previousRow.was.selectable || false
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: backend.selectPrevious()
@@ -1164,6 +1164,7 @@ ApplicationWindow {
     RepositoryMenu {
         open: win.repoMenuVisible || backend.repo === ""
         required: backend.repo === ""
+        allowOrganizations: !backend.demo
         repositories: backend.repositories
         loading: backend.repositoriesLoading
         error: backend.repositoriesError

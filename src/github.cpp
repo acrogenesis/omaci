@@ -58,6 +58,11 @@ static QJsonArray arrayIn(const QByteArray &json, const char *key, QString *erro
     return document.object().value(key).toArray();
 }
 
+static bool isPullRequestEvent(const QString &event) {
+    return event == "pull_request" || event == "pull_request_target" ||
+           event == "pull_request_review" || event == "pull_request_review_comment";
+}
+
 QVariantList parseRuns(const QByteArray &json, QString *error) {
     QVariantList runs;
     for (const auto &value : arrayIn(json, "workflow_runs", error)) {
@@ -67,28 +72,44 @@ QVariantList parseRuns(const QByteArray &json, QString *error) {
         const auto started = run["run_started_at"].toString();
         const auto event = run["event"].toString();
         const auto repositoryId = run["repository"].toObject()["id"].toVariant().toLongLong();
+        const auto headRepositoryId = run["head_repository"].toObject()["id"].toVariant().toLongLong();
+        const auto branch = run["head_branch"].toString();
+        const auto sha = run["head_sha"].toString();
+        const bool pullEvent = isPullRequestEvent(event);
         QVariantList pullNumbers;
-        if (repositoryId && (event == "pull_request" || event == "pull_request_target")) {
+        bool onPullHead = false;
+        if (repositoryId && (pullEvent || event == "push" || event == "workflow_dispatch")) {
             for (const auto &value : run["pull_requests"].toArray()) {
                 const auto pull = value.toObject();
                 const auto baseId = pull["base"].toObject()["repo"].toObject()["id"].toVariant().toLongLong();
-                if (baseId == repositoryId && pull["number"].toInt() > 0)
-                    pullNumbers << pull["number"].toInt();
+                const auto number = pull["number"].toInt();
+                if (baseId != repositoryId || number <= 0)
+                    continue;
+                const auto head = pull["head"].toObject();
+                const auto pullHeadRepo = head["repo"].toObject()["id"].toVariant().toLongLong();
+                const bool sameBranch = headRepositoryId && pullHeadRepo == headRepositoryId &&
+                                        !branch.isEmpty() && head["ref"].toString() == branch;
+                if (!pullEvent && !sameBranch)
+                    continue;
+                if (!pullNumbers.contains(number))
+                    pullNumbers << number;
+                onPullHead |= sameBranch && !sha.isEmpty() && head["sha"].toString() == sha;
             }
         }
         runs << QVariantMap{
             {"id", run["id"].toVariant().toLongLong()},
             {"workflow", run["name"].toString()},
             {"title", run["display_title"].toString()},
-            {"branch", run["head_branch"].toString()},
+            {"branch", branch},
             {"event", event},
             {"actor", run["actor"].toObject()["login"].toString()},
             {"pullNumbers", pullNumbers},
-            {"headRepositoryId", run["head_repository"].toObject()["id"].toVariant().toLongLong()},
+            {"headRepositoryId", headRepositoryId},
+            {"onPullHead", onPullHead},
             {"number", run["run_number"].toInt()},
             {"attempt", run["run_attempt"].toInt()},
-            {"sha", run["head_sha"].toString().left(7)},
-            {"fullSha", run["head_sha"].toString()},
+            {"sha", sha.left(7)},
+            {"fullSha", sha},
             {"url", run["html_url"].toString()},
             {"status", status},
             {"conclusion", conclusion},
@@ -227,12 +248,14 @@ void attachPullAuthors(QVariantList &runs, const QVariantList &pullRequests) {
         // Fork PR runs can have an empty pull_requests array. The commit is
         // also how branch pushes are linked to their PR.
         const auto event = run["event"].toString();
-        if (numbers.isEmpty() && (event == "pull_request" || event == "pull_request_target" ||
-                                  event == "push" || event == "workflow_dispatch")) {
+        if (numbers.isEmpty() && (isPullRequestEvent(event) || event == "push" || event == "workflow_dispatch")) {
             const auto repositoryId = run["headRepositoryId"].toLongLong();
-            for (const auto &head : byHead.values(run["fullSha"].toString()))
-                if (head.branch == run["branch"] && (!repositoryId || !head.repositoryId || repositoryId == head.repositoryId))
+            for (const auto &head : byHead.values(run["fullSha"].toString())) {
+                if (repositoryId && repositoryId == head.repositoryId && head.branch == run["branch"]) {
                     authors << head.author;
+                    run["onPullHead"] = true;
+                }
+            }
         }
         authors.removeDuplicates();
         authors.sort(Qt::CaseInsensitive);
@@ -340,12 +363,14 @@ QVariantList builds(const QVariantList &runs) {
                        : QString("run:%1").arg(run["id"].toLongLong());
         const auto repository = run["repository"].toString();
         if (!repository.isEmpty()) {
-            // pull_request_target runs carry the base commit, which different
-            // PRs can share. Group those runs by the linked PR as well.
-            if (run["event"] == "pull_request_target") {
+            // Some pull_request_target runs identify the PR head. When the
+            // relationship is unproven, the SHA can be a shared base commit.
+            if (run["event"] == "pull_request_target" && !run["onPullHead"].toBool()) {
                 const auto numbers = run["pullNumbers"].toList();
                 key += numbers.size() == 1 ? QString(":pull:%1").arg(numbers.first().toInt())
                                            : QString(":run:%1").arg(run["id"].toLongLong());
+            } else if (!key.startsWith("run:")) {
+                key += QString(":%1:%2").arg(run["headRepositoryId"].toLongLong()).arg(run["branch"].toString());
             }
             key.prepend(repository + ':');
         }

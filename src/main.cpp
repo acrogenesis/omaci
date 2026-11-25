@@ -156,6 +156,10 @@ int main(int argc, char *argv[]) {
     const bool demo = parser.isSet(demoOption);
     const bool shot = parser.isSet(screenshotOption);
     auto repo = parser.positionalArguments().value(0);
+    if (demo && repo.trimmed().startsWith("org:", Qt::CaseInsensitive)) {
+        qWarning("The demo shows an example repository. Organization watching uses live GitHub data.");
+        return 2;
+    }
     if (repo.isEmpty())
         repo = demo ? QString("acme/storefront") : repoOfDirectory();
     const auto sha = parser.value(shaOption).toLower();

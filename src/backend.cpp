@@ -11,6 +11,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 #include "compare.h"
@@ -69,10 +70,44 @@ static bool validPullAuthor(const QString &login) {
     return login.isEmpty() || pattern.match(login).hasMatch();
 }
 
+struct HttpReply {
+    int status = 0;
+    QByteArray headers;
+    QByteArray body;
+
+    QByteArray header(const QByteArray &name) const {
+        for (const auto &line : headers.split('\n')) {
+            const auto separator = line.indexOf(':');
+            if (separator > 0 && line.left(separator).toLower() == name)
+                return line.mid(separator + 1).trimmed();
+        }
+        return {};
+    }
+};
+
+static HttpReply httpReply(const QByteArray &output) {
+    if (!output.startsWith("HTTP/"))
+        return {0, {}, output};
+    auto split = output.indexOf("\r\n\r\n");
+    const int separatorLength = split >= 0 ? 4 : 2;
+    if (split < 0)
+        split = output.indexOf("\n\n");
+    const auto headers = split < 0 ? output : output.left(split);
+    const auto status = headers.left(headers.indexOf('\n')).split(' ').value(1).toInt();
+    return {status, headers, split < 0 ? QByteArray() : output.mid(split + separatorLength)};
+}
+
 Backend::Backend(const QString &repo, bool demo, QObject *parent)
     : QObject(parent), m_repo(repo), m_gh(findGh()), m_demo(demo) {
     m_poll.setSingleShot(true);
-    connect(&m_poll, &QTimer::timeout, this, [this] { refreshRuns(false); });
+    connect(&m_poll, &QTimer::timeout, this, [this] {
+        refreshRuns(std::exchange(m_orgRefreshRequested, false));
+    });
+    m_requestWake.setSingleShot(true);
+    connect(&m_requestWake, &QTimer::timeout, this, [this] {
+        pump();
+        emit organizationProgressChanged();
+    });
     // The time left changes with the clock, not only with what GitHub says.
     m_tick.setInterval(1000);
     connect(&m_tick, &QTimer::timeout, this, &Backend::computeEstimate);
@@ -98,6 +133,15 @@ QVariantMap Backend::buildByKey(const QString &key) const {
     return {};
 }
 
+bool Backend::hasVisibleBuild(const QString &key) const {
+    return std::any_of(m_builds.cbegin(), m_builds.cend(),
+                       [&key](const QVariant &build) { return build.toMap()["key"] == key; });
+}
+
+QVariantList Backend::comparisonBuilds(const QVariantMap &build) const {
+    return m_buildsByRepository.value(build["repository"].toString());
+}
+
 QVariantMap Backend::selectedJob() const {
     for (const auto &job : m_jobs)
         if (job.toMap()["id"].toLongLong() == m_jobId)
@@ -121,6 +165,14 @@ bool Backend::matchesPullAuthor(const QVariantMap &build) const {
 QString Backend::organizationProgress() const {
     if (organization().isEmpty())
         return {};
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    const auto rest = requestAvailableAt(false);
+    const auto search = !m_pullAuthor.isEmpty() && m_orgPoll.repositories.isEmpty() ? requestAvailableAt(true) : 0;
+    const auto retry = qMax(rest, search);
+    if (m_fetchingRuns && retry > now)
+        return QString("GitHub rate limit · retry at %1").arg(QDateTime::fromMSecsSinceEpoch(retry).toString("HH:mm:ss"));
+    if (!m_orgManualRemaining.isEmpty())
+        return QString("Checking repositories %1/%2").arg(m_orgManualTotal - m_orgManualRemaining.size()).arg(m_orgManualTotal);
     if (m_pullAuthor.isEmpty() && m_orgActivity.size() < m_orgCatalog.size())
         return QString("Checking repositories %1/%2").arg(m_orgActivity.size()).arg(m_orgCatalog.size());
     if (!m_fetchingRuns)
@@ -130,7 +182,7 @@ QString Backend::organizationProgress() const {
     return QString("Checking repositories %1/%2").arg(m_orgPoll.next - m_orgPoll.pending).arg(m_orgPoll.repositories.size());
 }
 
-void Backend::gh(const QStringList &args, Done done) {
+void Backend::gh(const QStringList &args, Done done, quint64 organizationPoll) {
     if (m_demo) {
         // Answered a moment later, the way a real call is, so the window goes
         // through the same states.
@@ -145,22 +197,41 @@ void Backend::gh(const QStringList &args, Done done) {
                         "and log in with `gh auth login`.");
         return;
     }
-    m_queue.append({args, done});
+    m_queue.append({args, done, organizationPoll});
     pump();
 }
 
 // A handful of gh processes at a time: opening a build can ask for the jobs
 // of a dozen earlier runs at once.
 void Backend::pump() {
+    m_requestWake.stop();
+    m_queue.removeIf([this](const Call &call) {
+        return call.organizationPoll && call.organizationPoll != m_orgPollId;
+    });
     while (m_running < MaxProcesses && !m_queue.isEmpty()) {
-        const auto call = m_queue.takeFirst();
+        const auto now = QDateTime::currentMSecsSinceEpoch();
+        qint64 wake = std::numeric_limits<qint64>::max();
+        auto next = std::find_if(m_queue.begin(), m_queue.end(), [this, now, &wake](const Call &call) {
+            const auto available = requestAvailableAt(call.args.value(1) == "graphql");
+            wake = qMin(wake, available);
+            return available <= now;
+        });
+        if (next == m_queue.end()) {
+            m_requestWake.start(int(std::clamp<qint64>(wake - now, 1, std::numeric_limits<int>::max())));
+            return;
+        }
+        const auto call = *next;
+        m_queue.erase(next);
         auto *process = new QProcess(this);
         ++m_running;
         emit busyChanged();
-        auto finish = [this, process, done = call.done](bool ok, const QString &err) {
+        auto finish = [this, process, done = call.done, graphql = call.args.value(1) == "graphql",
+                       includedHeaders = call.args.contains("--include")]
+                      (bool ok, const QString &err) {
             const auto out = process->readAllStandardOutput();
             process->deleteLater();
             --m_running;
+            noteRateLimit(graphql, includedHeaders ? out : QByteArray(), err);
             emit busyChanged();
             done(ok, out, err);
             pump();
@@ -177,9 +248,42 @@ void Backend::pump() {
     }
 }
 
+qint64 Backend::requestAvailableAt(bool graphql) const {
+    return qMax(m_secondaryRetryAt, graphql ? m_graphqlRetryAt : m_restRetryAt);
+}
+
+void Backend::noteRateLimit(bool graphql, const QByteArray &output, const QString &error) {
+    const auto response = httpReply(output);
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    auto &primaryRetry = graphql ? m_graphqlRetryAt : m_restRetryAt;
+    const auto reset = response.header("x-ratelimit-reset").toLongLong() * 1000;
+    const bool primary = response.header("x-ratelimit-remaining") == "0" && reset > now;
+    const bool rejected = response.status == 403 || response.status == 429;
+    bool hasRetryAfter = false;
+    const auto retryAfter = response.header("retry-after").toInt(&hasRetryAfter);
+    const bool secondary = (rejected && hasRetryAfter) || (response.status == 429 && !primary) ||
+                           error.contains("secondary rate limit", Qt::CaseInsensitive);
+    if (primary)
+        primaryRetry = qMax(primaryRetry, reset + 1000);
+    else if (!secondary && error.contains("rate limit exceeded", Qt::CaseInsensitive))
+        primaryRetry = qMax(primaryRetry, now + IdleInterval);
+    if (secondary) {
+        if (hasRetryAfter) {
+            m_secondaryRetryAt = qMax(m_secondaryRetryAt, now + qint64(qMax(1, retryAfter)) * 1000);
+        } else if (m_secondaryRetryAt <= now) {
+            m_secondaryBackoff = now - m_secondaryRetryAt < IdleInterval
+                                     ? std::clamp<qint64>(m_secondaryBackoff * 2, IdleInterval, 60 * IdleInterval)
+                                     : IdleInterval;
+            m_secondaryRetryAt = now + m_secondaryBackoff;
+        }
+    }
+    if (primary || secondary || primaryRetry > now)
+        emit organizationProgressChanged();
+}
+
 // A JSON request that sends along the ETag of the answer it got last time.
 // "Not modified" comes back as the answer already here.
-void Backend::api(const QString &path, Done done, const QString &projection) {
+void Backend::api(const QString &path, Done done, const QString &projection, quint64 organizationPoll) {
     if (m_demo) {
         gh({"api", path}, done);
         return;
@@ -191,29 +295,21 @@ void Backend::api(const QString &path, Done done, const QString &projection) {
         args << "--jq" << projection;
     args << path;
     gh(args, [this, path, done, scope = m_scope](bool ok, const QByteArray &out, const QString &err) {
-        int split = out.indexOf("\r\n\r\n"), skip = 4;
-        if (split < 0) {
-            split = out.indexOf("\n\n");
-            skip = 2;
-        }
-        const auto head = split < 0 ? out : out.left(split);
-        const auto body = split < 0 ? QByteArray() : out.mid(split + skip);
-        const auto statusLine = head.left(qMax<qsizetype>(0, head.indexOf('\n')));
-        if (statusLine.startsWith("HTTP/") && statusLine.contains(" 304") && m_kept.contains(path)) {
-            done(true, m_kept[path].body, {});
+        const auto response = httpReply(out);
+        if (response.status == 304 && m_kept.contains(path)) {
+            const auto cached = m_kept.value(path).body;
+            done(true, cached, {});
             return;
         }
         if (!ok) {
-            done(false, body, err);
+            done(false, response.body, err);
             return;
         }
-        static const QRegularExpression etag(R"(^etag:\s*(\S.*?)\s*$)", QRegularExpression::MultilineOption |
-                                                                           QRegularExpression::CaseInsensitiveOption);
-        const auto match = etag.match(QString::fromLatin1(head));
-        if (scope == m_scope && match.hasMatch())
-            m_kept[path] = {match.captured(1).toLatin1(), body};
-        done(true, body, {});
-    });
+        const auto etag = response.header("etag");
+        if (scope == m_scope && !etag.isEmpty())
+            m_kept[path] = {etag, response.body};
+        done(true, response.body, {});
+    }, organizationPoll);
 }
 
 // Which branch "main" is here, asked once per repository. Until the answer
@@ -252,6 +348,14 @@ QString Backend::baseBranch(const QVariantMap &build) const {
 }
 
 void Backend::refresh() {
+    if (!organization().isEmpty() && m_pullAuthor.isEmpty()) {
+        if (!m_orgManualRemaining.isEmpty() || (m_fetchingRuns && m_orgPoll.force))
+            return;
+        if (m_fetchingRuns) {
+            m_orgRefreshRequested = true;
+            return;
+        }
+    }
     refreshRuns(true);
 }
 
@@ -313,10 +417,10 @@ void Backend::fetchOrganizationPage(int page) {
         QString error;
         const auto repositories = ok ? GitHub::parseRepositories(out, &error) : QVariantList{};
         if (!ok || !error.isEmpty()) {
-            m_orgPoll.catalogError = error.isEmpty() ? (err.isEmpty() ? "Fetching organization repositories failed." : err)
-                                                    : error;
+            m_orgCatalogError = error.isEmpty() ? (err.isEmpty() ? "Fetching organization repositories failed." : err)
+                                               : error;
             if (m_orgCatalogCheckedAt == 0) {
-                failOrganizationPoll(m_orgPoll.catalogError);
+                failOrganizationPoll(m_orgCatalogError);
                 return;
             }
             m_orgCatalogCheckedAt = QDateTime::currentMSecsSinceEpoch();
@@ -334,8 +438,12 @@ void Backend::fetchOrganizationPage(int page) {
         }
         m_orgCatalog = std::move(m_orgPoll.repositories);
         m_orgCatalogCheckedAt = QDateTime::currentMSecsSinceEpoch();
+        if (!m_orgCatalogFirstCheckedAt)
+            m_orgCatalogFirstCheckedAt = m_orgCatalogCheckedAt;
+        m_orgCatalogError.clear();
+        m_orgPoll.catalogLoaded = true;
         startOrganizationRuns(m_orgCatalog);
-    }, "[.[] | {full_name, archived, disabled, default_branch, pushed_at}]");
+    }, "[.[] | {full_name, archived, disabled, default_branch, pushed_at}]", m_orgPollId);
 }
 
 void Backend::fetchAuthoredRepositories() {
@@ -365,50 +473,68 @@ void Backend::fetchAuthoredRepositories() {
                                   ? "app/" + author.chopped(5) : author;
     const auto search = QString("org:%1 is:pr author:%2 archived:false sort:updated-desc")
                             .arg(organization(), searchAuthor);
-    gh({"api", "graphql", "-f", "query=" + query, "-f", "search=" + search},
+    gh({"api", "graphql", "--include", "-f", "query=" + query, "-f", "search=" + search},
        [this, author, poll = m_orgPollId](bool ok, const QByteArray &out, const QString &err) {
            if (poll != m_orgPollId)
                return;
            QString error;
-           const auto repositories = ok ? GitHub::parseAuthoredRepositories(out, author, &error) : QVariantList{};
+           const auto repositories = ok ? GitHub::parseAuthoredRepositories(httpReply(out).body, author, &error)
+                                        : QVariantList{};
            if (!ok || !error.isEmpty()) {
                failOrganizationPoll(error.isEmpty() ? (err.isEmpty() ? "Looking up pull requests failed." : err)
                                                      : error);
                return;
            }
+           m_orgPoll.catalogLoaded = true;
            startOrganizationRuns(repositories);
-       });
+       }, m_orgPollId);
 }
 
 Backend::RepositoryRuns &Backend::organizationRuns() {
     return m_pullAuthor.isEmpty() ? m_orgRuns : m_orgAuthorRuns;
 }
 
+QHash<QString, QString> &Backend::organizationErrors() {
+    return m_pullAuthor.isEmpty() ? m_orgErrors : m_orgAuthorErrors;
+}
+
 qint64 Backend::organizationRepositoryDue(const QVariantMap &repository, qint64 now) const {
-    const auto activity = m_orgActivity.value(repository["name"].toString());
+    const auto name = repository["name"].toString();
+    const auto activity = m_orgActivity.value(name);
     const auto pushedAt = GitHub::ms(repository["pushedAt"].toString());
     if (!activity.checkedAt)
-        return now;
+        return m_orgCatalogFirstCheckedAt ? m_orgCatalogFirstCheckedAt : now;
     const auto lastActivity = qMax(pushedAt, activity.lastRun);
-    const int interval = activity.active ? OrganizationActiveInterval
+    const int interval = activity.failed ? IdleInterval
+                       : activity.active ? OrganizationActiveInterval
                        : now - lastActivity <= RecentActivity ? IdleInterval
                        : OrganizationQuietInterval;
     const auto next = activity.checkedAt + interval;
-    return pushedAt > activity.checkedAt ? qMin(pushedAt, next) : next;
+    const auto due = pushedAt > activity.checkedAt ? qMin(pushedAt, next) : next;
+    return m_orgManualRemaining.contains(name) ? qMin(due, m_orgManualStartedAt) : due;
 }
 
 void Backend::startOrganizationRuns(const QVariantList &repositories) {
     QSet<QString> current;
     for (const auto &value : repositories)
         current.insert(value.toMap()["name"].toString());
-    organizationRuns().removeIf([&current](const auto &entry) { return !current.contains(entry.key()); });
+    const auto outsideScope = [&current](const auto &entry) { return !current.contains(entry.key()); };
+    m_orgPoll.changed = organizationRuns().removeIf(outsideScope) > 0;
+    organizationErrors().removeIf(outsideScope);
+    m_orgPoll.emptyScope = repositories.isEmpty();
     m_orgPoll.repositories = repositories;
     if (m_pullAuthor.isEmpty()) {
         m_orgActivity.removeIf([&current](const auto &entry) { return !current.contains(entry.key()); });
         const auto now = QDateTime::currentMSecsSinceEpoch();
+        if (m_orgPoll.force) {
+            m_orgManualRemaining = current;
+            m_orgManualTotal = current.size();
+            m_orgManualStartedAt = now;
+        } else {
+            m_orgManualRemaining.intersect(current);
+        }
         auto &due = m_orgPoll.repositories;
-        if (!m_orgPoll.force)
-            due.removeIf([this, now](const auto &value) { return organizationRepositoryDue(value.toMap(), now) > now; });
+        due.removeIf([this, now](const auto &value) { return organizationRepositoryDue(value.toMap(), now) > now; });
         std::stable_sort(due.begin(), due.end(), [this, now](const auto &first, const auto &second) {
             const auto firstRepo = first.toMap(), secondRepo = second.toMap();
             const bool firstActive = m_orgActivity.value(firstRepo["name"].toString()).active;
@@ -420,7 +546,7 @@ void Backend::startOrganizationRuns(const QVariantList &repositories) {
                 return firstDue < secondDue;
             return firstRepo["pushedAt"].toString() > secondRepo["pushedAt"].toString();
         });
-        if (!m_orgPoll.force && due.size() > OrganizationBatchSize)
+        if (due.size() > OrganizationBatchSize)
             due.resize(OrganizationBatchSize);
     }
     emit organizationProgressChanged();
@@ -445,15 +571,22 @@ void Backend::fetchOrganizationRuns() {
 
     m_fetchingRuns = false;
     QStringList errors;
-    if (!m_orgPoll.catalogError.isEmpty())
-        errors << m_orgPoll.catalogError;
-    if (m_orgPoll.failed > 0)
-        errors << QString("GitHub data could not be refreshed for %1 of %2 repositories. %3")
-                      .arg(m_orgPoll.failed).arg(m_orgPoll.repositories.size()).arg(m_orgPoll.firstError);
+    if (m_pullAuthor.isEmpty() && !m_orgCatalogError.isEmpty())
+        errors << m_orgCatalogError;
+    const auto &repositoryErrors = organizationErrors();
+    if (!repositoryErrors.isEmpty())
+        errors << QString("GitHub data could not be refreshed for %1 repositories. %2 · %3")
+                      .arg(repositoryErrors.size()).arg(repositoryErrors.constBegin().key(), repositoryErrors.constBegin().value());
     setError(errors.join('\n'));
-    if (m_orgPoll.receivedRuns > 0 || m_orgPoll.repositories.isEmpty())
+    if (m_orgPoll.receivedRuns > 0 || (m_orgPoll.catalogLoaded && m_orgPoll.emptyScope)) {
+        markUpdated();
         remember(m_repo);
-    publishOrganizationRuns();
+    }
+    const auto previousKey = m_key;
+    if (m_orgPoll.changed)
+        publishOrganizationRuns();
+    if (m_orgPoll.checkedSelection || m_key != previousKey)
+        fetchJobs();
     emit organizationProgressChanged();
     schedule();
 }
@@ -468,8 +601,7 @@ void Backend::publishOrganizationRuns() {
         return firstStart == secondStart ? first["id"].toLongLong() > second["id"].toLongLong()
                                         : firstStart > secondStart;
     });
-    applyRuns(runs);
-    fetchJobs();
+    applySnapshot(runs);
 }
 
 void Backend::fetchOrganizationRepository(const QVariantMap &repository) {
@@ -492,38 +624,57 @@ void Backend::fetchOrganizationRepository(const QVariantMap &repository) {
             run["defaultBranch"] = repository["defaultBranch"];
             value = run;
         }
-        if (!m_pullAuthor.isEmpty())
+        if (!m_pullAuthor.isEmpty()) {
+            const auto unfiltered = runs.mid(0, OrganizationRunsPerRepo);
+            // Both views use the same underlying run data. Keep the cached
+            // organization view current when a filtered refresh sees a finish.
+            m_orgRuns.insert(repo, unfiltered);
+            recordOrganizationActivity(repo, unfiltered, true);
+            m_orgErrors.remove(repo);
+            m_orgUnfilteredUpdated = QDateTime::currentDateTime();
             GitHub::attachPullAuthors(runs, repository["pullRequests"].toList());
+        }
         finishOrganizationRepository(repo, runs, {}, true);
     }, "{workflow_runs: [.workflow_runs[] | {id, name, display_title, head_branch, event, "
        "actor: {login: .actor.login}, head_repository: {id: .head_repository.id}, repository: {id: .repository.id}, "
-       "pull_requests: [.pull_requests[]? | {number, base: {repo: {id: .base.repo.id}}}], "
-       "run_number, run_attempt, head_sha, html_url, status, conclusion, run_started_at, created_at, updated_at}]}");
+       "pull_requests: [.pull_requests[]? | {number, base: {repo: {id: .base.repo.id}}, "
+       "head: {sha: .head.sha, ref: .head.ref, repo: {id: .head.repo.id}}}], "
+       "run_number, run_attempt, head_sha, html_url, status, conclusion, run_started_at, created_at, updated_at}]}",
+       m_orgPollId);
+}
+
+void Backend::recordOrganizationActivity(const QString &repository, const QVariantList &runs, bool receivedRuns) {
+    auto &activity = m_orgActivity[repository];
+    activity.checkedAt = QDateTime::currentMSecsSinceEpoch();
+    activity.failed = !receivedRuns;
+    if (!receivedRuns)
+        return;
+    activity.active = false;
+    activity.lastRun = 0;
+    for (const auto &value : runs) {
+        const auto run = value.toMap();
+        activity.active |= GitHub::isActive(run["state"].toString());
+        activity.lastRun = qMax(activity.lastRun, GitHub::ms(run["updatedAt"].toString()));
+    }
 }
 
 void Backend::finishOrganizationRepository(const QString &repository, const QVariantList &runs,
                                            const QString &error, bool receivedRuns) {
     if (m_pullAuthor.isEmpty()) {
-        auto &activity = m_orgActivity[repository];
-        activity.checkedAt = QDateTime::currentMSecsSinceEpoch();
-        if (receivedRuns) {
-            activity.active = false;
-            activity.lastRun = 0;
-            for (const auto &value : runs) {
-                const auto run = value.toMap();
-                activity.active |= GitHub::isActive(run["state"].toString());
-                activity.lastRun = qMax(activity.lastRun, GitHub::ms(run["updatedAt"].toString()));
-            }
-        }
+        m_orgManualRemaining.remove(repository);
+        recordOrganizationActivity(repository, runs, receivedRuns);
     }
     if (receivedRuns) {
-        organizationRuns().insert(repository, runs);
+        auto &snapshot = organizationRuns()[repository];
+        if (snapshot != runs) {
+            snapshot = runs;
+            m_orgPoll.changed = true;
+        }
+        m_orgPoll.checkedSelection |= selectedBuild()["repository"] == repository;
+        organizationErrors().remove(repository);
         ++m_orgPoll.receivedRuns;
-    }
-    if (!receivedRuns || !error.isEmpty()) {
-        ++m_orgPoll.failed;
-        if (m_orgPoll.firstError.isEmpty())
-            m_orgPoll.firstError = repository + " · " + (error.isEmpty() ? "Fetching workflow runs failed." : error);
+    } else {
+        organizationErrors()[repository] = error.isEmpty() ? "Fetching workflow runs failed." : error;
     }
     --m_orgPoll.pending;
     const auto checked = m_orgPoll.next - m_orgPoll.pending;
@@ -532,9 +683,11 @@ void Backend::finishOrganizationRepository(const QString &repository, const QVar
             const auto run = value.toMap();
             return matchesPullAuthor(run) && (!m_runningOnly || GitHub::isActive(run["state"].toString()));
         });
-        if (firstMatch || checked - m_orgPoll.published >= 8) {
-            m_orgPoll.published = checked;
+        if (firstMatch && m_orgPoll.changed) {
+            m_orgPoll.changed = false;
+            markUpdated();
             publishOrganizationRuns();
+            fetchJobs();
         }
         emit organizationProgressChanged();
     }
@@ -542,9 +695,20 @@ void Backend::finishOrganizationRepository(const QString &repository, const QVar
 }
 
 void Backend::applyRuns(const QVariantList &runs) {
+    markUpdated();
+    applySnapshot(runs);
+}
+
+void Backend::markUpdated() {
+    m_lastUpdated = QDateTime::currentDateTime();
+    if (!organization().isEmpty() && m_pullAuthor.isEmpty())
+        m_orgUnfilteredUpdated = m_lastUpdated;
+    emit lastUpdatedChanged();
+}
+
+void Backend::applySnapshot(const QVariantList &runs) {
     const auto before = m_allBuilds;
     m_listRuns = runs;
-    m_lastUpdated = QDateTime::currentDateTime();
     rebuild();
     if (!before.isEmpty())
         for (const auto &build : GitHub::finishedBuilds(before, m_allBuilds))
@@ -563,14 +727,26 @@ void Backend::rebuild() {
         if (!ids.contains(run.toMap()["id"].toLongLong()))
             runs << run;
 
-    m_allBuilds = GitHub::builds(runs);
+    const auto history = GitHub::builds(runs);
+    m_buildsByRepository.clear();
+    for (const auto &value : history)
+        m_buildsByRepository[value.toMap()["repository"].toString()] << value;
+
+    // Only runs attributed to the requested author contribute to the build's
+    // state and jobs. Other runs on that commit can be independent workflows.
+    if (m_pullAuthor.isEmpty()) {
+        m_allBuilds = history;
+    } else {
+        runs.removeIf([this](const QVariant &run) { return !matchesPullAuthor(run.toMap()); });
+        m_allBuilds = GitHub::builds(runs);
+    }
     // A running build's row says how far along it is, which only needs how
     // long builds like it usually take.
     for (auto &value : m_allBuilds) {
         auto build = value.toMap();
         if (!GitHub::isActive(build["state"].toString()))
             continue;
-        const auto usual = Estimate::spread(Estimate::likeBuilds(m_allBuilds, build));
+        const auto usual = Estimate::spread(Estimate::likeBuilds(comparisonBuilds(build), build));
         build["usual"] = usual.known() ? usual.typical : 0.0;
         value = build;
     }
@@ -611,9 +787,7 @@ void Backend::filterBuilds() {
             }
         }
     }
-    const bool gone = std::none_of(m_builds.cbegin(), m_builds.cend(),
-                                   [&](const QVariant &build) { return build.toMap()["key"] == key; });
-    if (gone)
+    if (!hasVisibleBuild(key))
         key = m_builds.isEmpty() ? QString() : m_builds.first().toMap()["key"].toString();
 
     emit buildsChanged();
@@ -639,6 +813,10 @@ void Backend::clearJob() {
 
 void Backend::schedule() {
     const auto interval = activeCount() > 0 ? ActiveInterval : IdleInterval;
+    if (m_orgRefreshRequested) {
+        m_poll.start(1000);
+        return;
+    }
     if (organization().isEmpty() || !m_pullAuthor.isEmpty() || !m_orgCatalogCheckedAt) {
         m_poll.start(organization().isEmpty() ? interval : IdleInterval);
         return;
@@ -722,7 +900,7 @@ void Backend::fetchJobs() {
     }
     // The jobs of the build main had before this one, to compare with. It
     // is finished, so this is asked once.
-    for (const auto &value : Compare::previous(m_allBuilds, build, baseBranch(build))["runs"].toList()) {
+    for (const auto &value : Compare::previous(comparisonBuilds(build), build, baseBranch(build))["runs"].toList()) {
         const auto run = value.toMap();
         if (run["state"] != "skipped" && !m_jobsOfRun.value(run["id"].toLongLong()).final)
             fetchRunJobs(run, true);
@@ -829,13 +1007,14 @@ void Backend::rebuildJobs() {
     const auto origin = GitHub::ms(build["startedAt"].toString());
     const bool several = build["workflows"].toStringList().size() > 1;
 
-    m_like = build.isEmpty() ? QVariantList{} : Estimate::likeBuilds(m_allBuilds, build);
+    m_like = build.isEmpty() ? QVariantList{} : Estimate::likeBuilds(comparisonBuilds(build), build);
     QVariantList history;
     for (auto it = m_like.crbegin(); it != m_like.crend(); ++it) {
         const auto earlier = it->toMap();
         history << QVariantMap{{"key", earlier["key"]},     {"seconds", earlier["seconds"]},
                                {"state", earlier["state"]}, {"title", earlier["title"]},
-                               {"sha", earlier["sha"]},     {"current", false}};
+                               {"sha", earlier["sha"]},     {"current", false},
+                               {"selectable", hasVisibleBuild(earlier["key"].toString())}};
     }
     if (!build.isEmpty())
         history << QVariantMap{{"key", build["key"]},     {"seconds", build["seconds"]},
@@ -903,7 +1082,8 @@ void Backend::rebuildJobs() {
 // The picked build next to the one main had before it.
 void Backend::computePrevious() {
     const auto build = selectedBuild();
-    const auto before = build.isEmpty() ? QVariantMap{} : Compare::previous(m_allBuilds, build, baseBranch(build));
+    const auto before = build.isEmpty() ? QVariantMap{}
+                                        : Compare::previous(comparisonBuilds(build), build, baseBranch(build));
     QVariantMap map;
     if (!before.isEmpty()) {
         const auto origin = GitHub::ms(build["startedAt"].toString());
@@ -948,7 +1128,7 @@ void Backend::computePrevious() {
             reach = qMax(reach, row.thenEnd);
         }
         map = QVariantMap{{"key", before["key"]},
-                          {"matchesAuthor", matchesPullAuthor(before)},
+                          {"selectable", matchesPullAuthor(before) && !m_runningOnly},
                           {"title", before["title"]},
                           {"sha", before["sha"]},
                           {"branch", before["branch"]},
@@ -971,7 +1151,7 @@ void Backend::computePrevious() {
 
 void Backend::selectPrevious() {
     const auto key = m_previous.value("key").toString();
-    if (key.isEmpty() || !m_previous.value("matchesAuthor").toBool())
+    if (key.isEmpty() || !m_previous.value("selectable").toBool())
         return;
     // It has to be in the list to be picked.
     if (!m_branch.isEmpty() && m_previous["branch"] != m_branch) {
@@ -1213,7 +1393,7 @@ void Backend::applyLog(qlonglong jobId, const QByteArray &raw, bool final) {
 }
 
 void Backend::selectBuild(const QString &key) {
-    if (key == m_key || buildByKey(key).isEmpty())
+    if (key == m_key || !hasVisibleBuild(key))
         return;
     m_cameFrom.clear();
     m_key = key;
@@ -1296,6 +1476,10 @@ void Backend::show(const QString &asked, const QString &sha) {
         setError(QString("Enter a repository as owner/name or an organization as org:name. Received \"%1\".").arg(repo));
         return;
     }
+    if (isOrg && m_demo) {
+        setError("The demo shows an example repository. Organization watching uses live GitHub data.");
+        return;
+    }
     if (isOrg)
         repo = repo.toLower();
     if (repo != m_repo) {
@@ -1306,6 +1490,7 @@ void Backend::show(const QString &asked, const QString &sha) {
         m_listRuns.clear();
         m_extraRuns.clear();
         m_allBuilds.clear();
+        m_buildsByRepository.clear();
         m_jobsOfRun.clear();
         m_jobsInFlight.clear();
         m_defaultBranch.clear();
@@ -1317,7 +1502,14 @@ void Backend::show(const QString &asked, const QString &sha) {
         m_orgAuthorRuns.clear();
         m_orgCatalog.clear();
         m_orgCatalogCheckedAt = 0;
+        m_orgCatalogFirstCheckedAt = 0;
+        m_orgCatalogError.clear();
+        m_orgUnfilteredUpdated = {};
+        m_orgRefreshRequested = false;
+        m_orgManualRemaining.clear();
         m_orgActivity.clear();
+        m_orgErrors.clear();
+        m_orgAuthorErrors.clear();
         m_orgPoll = {};
         m_key.clear();
         m_cameFrom.clear();
@@ -1331,6 +1523,7 @@ void Backend::show(const QString &asked, const QString &sha) {
         clearJob();
         setError({});
         emit repoChanged();
+        emit lastUpdatedChanged();
         emit organizationProgressChanged();
     }
     m_wantCommit = !isOrg && validSha.match(sha).hasMatch() ? sha : QString();
@@ -1393,10 +1586,16 @@ void Backend::setPullAuthor(const QString &author) {
     // A filter change starts its own poll while the old requests wind down.
     ++m_orgPollId;
     m_fetchingRuns = false;
+    m_orgRefreshRequested = false;
+    m_orgManualRemaining.clear();
     m_orgAuthorRuns.clear();
+    m_orgAuthorErrors.clear();
     m_allBuilds.clear();
+    m_lastUpdated = login.isEmpty() ? m_orgUnfilteredUpdated : QDateTime();
+    emit lastUpdatedChanged();
     setError({});
     publishOrganizationRuns();
+    fetchJobs();
     refreshRuns(false);
 }
 

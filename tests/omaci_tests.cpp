@@ -182,18 +182,28 @@ private slots:
             {"id":3,"event":"pull_request","head_sha":"commit","head_branch":"topic","head_repository":{"id":4},
              "actor":{"login":"bot"}},
             {"id":4,"event":"schedule","head_sha":"commit","head_branch":"topic","actor":{"login":"alice"}},
-            {"id":5,"event":"push","head_sha":"commit","head_branch":"main","head_repository":{"id":4}}
+            {"id":5,"event":"push","head_sha":"commit","head_branch":"main","head_repository":{"id":4},
+             "repository":{"id":9},"pull_requests":[{"number":11,"base":{"repo":{"id":9}},"head":{"ref":"topic","repo":{"id":4}}}]},
+            {"id":6,"event":"push","head_sha":"old","head_branch":"topic","head_repository":{"id":4},
+             "repository":{"id":9},"pull_requests":[{"number":11,"base":{"repo":{"id":9}},"head":{"ref":"topic","repo":{"id":4}}}]},
+            {"id":7,"event":"pull_request_review","head_sha":"old","repository":{"id":9},
+             "pull_requests":[{"number":11,"base":{"repo":{"id":9}}}]},
+            {"id":8,"event":"pull_request_target","head_sha":"commit","head_branch":"topic","head_repository":{"id":4},
+             "repository":{"id":9},"pull_requests":[{"number":11,"base":{"repo":{"id":9}},"head":{"sha":"commit","ref":"topic","repo":{"id":4}}}]}
         ]})");
         GitHub::attachPullAuthors(runs, {
             QVariantMap{{"number", 11}, {"login", "alice"}, {"headSha", "commit"}, {"headBranch", "topic"}, {"headRepositoryId", 4}},
             QVariantMap{{"number", 12}, {"login", "bob"}, {"headSha", "commit"}, {"headBranch", "topic"}, {"headRepositoryId", 5}}
         });
-        QCOMPARE(runs.size(), 5);
+        QCOMPARE(runs.size(), 8);
         QCOMPARE(runs[0].toMap()["pullAuthors"].toStringList(), QStringList{"alice"});
         QCOMPARE(runs[1].toMap()["pullAuthors"].toStringList(), QStringList{"bob"});
         QCOMPARE(runs[2].toMap()["pullAuthors"].toStringList(), QStringList{"alice"});
         QVERIFY(runs[3].toMap()["pullAuthors"].toStringList().isEmpty());
         QVERIFY(runs[4].toMap()["pullAuthors"].toStringList().isEmpty());
+        QCOMPARE(runs[5].toMap()["pullAuthors"].toStringList(), QStringList{"alice"});
+        QCOMPARE(runs[6].toMap()["pullAuthors"].toStringList(), QStringList{"alice"});
+        QCOMPARE(runs[7].toMap()["pullAuthors"].toStringList(), QStringList{"alice"});
         for (auto &value : runs) {
             auto run = value.toMap();
             run["repository"] = "acme/shop";
@@ -201,6 +211,37 @@ private slots:
         }
         const auto builds = GitHub::builds(runs);
         QVERIFY(builds[0].toMap()["key"] != builds[1].toMap()["key"]);
+        QCOMPARE(builds[2].toMap()["runIds"].toList(), QVariantList({3LL, 8LL}));
+    }
+
+    void authorFilterHidesUnrelatedRunsAndPreventsHiddenSelection()
+    {
+        Backend backend("");
+        backend.setOffline(true);
+        backend.show("org:author-test");
+        backend.setPullAuthor("alice");
+        auto authored = run(1, "success", "shared-sha", 60, 30, "PR checks", "topic", "pull_request");
+        authored["repository"] = "author-test/shop";
+        authored["pullAuthors"] = QStringList{"Alice"};
+        auto unrelated = run(2, "running", "shared-sha", 60, 30, "Manual checks", "topic", "workflow_dispatch");
+        unrelated["repository"] = authored["repository"];
+        auto earlier = run(3, "success", "earlier-sha", 0, 30, "PR checks", "topic", "pull_request");
+        earlier["repository"] = authored["repository"];
+        earlier["pullAuthors"] = QStringList{"bob"};
+        backend.applyRuns({authored, unrelated, earlier});
+
+        QCOMPARE(backend.builds().size(), 1);
+        QCOMPARE(backend.selectedBuild()["state"].toString(), QString("success"));
+        QCOMPARE(backend.selectedBuild()["runIds"].toList(), QVariantList({1LL}));
+        QCOMPARE(backend.activeCount(), 0);
+        QCOMPARE(backend.history().size(), 2);
+        const auto hidden = backend.history().first().toMap();
+        QVERIFY(!hidden["selectable"].toBool());
+        const auto selected = backend.selectedKey();
+        backend.selectBuild(hidden["key"].toString());
+        QCOMPARE(backend.selectedKey(), selected);
+        backend.toggleRunning();
+        QVERIFY(backend.builds().isEmpty());
     }
 
     void opensOnTheRepositoryWatchedLast()
@@ -1370,8 +1411,11 @@ EOF
     repos/acme/alpha/actions/runs/101/jobs*) printf '%s\n' '{"jobs":[{"id":201,"run_id":101,"name":"alpha checks","status":"completed","conclusion":"success"}]}' ;;
     repos/acme/beta/actions/runs/102/jobs*) printf '%s\n' '{"jobs":[{"id":202,"run_id":102,"name":"beta checks","status":"completed","conclusion":"success"}]}' ;;
     'repos/acme/beta/actions/runs?per_page=100') printf '%s\n' 'Beta should be excluded from the author lookup' >&2; exit 1 ;;
-    repos/acme/alpha/actions/runs*) cat <<'EOF'
-{"workflow_runs":[{"id":101,"name":"CI","display_title":"Alpha PR","head_branch":"topic","head_sha":"1234567","event":"pull_request","status":"completed","conclusion":"success","actor":{"login":"morgan"},"repository":{"id":11},"pull_requests":[{"number":10,"base":{"repo":{"id":11}}}],"created_at":"2026-11-25T09:00:00Z","updated_at":"2026-11-25T09:00:30Z"}]}
+    repos/acme/alpha/actions/runs*)
+    status=in_progress
+    if [ -f "$(dirname "$0")/finished" ]; then status=completed; fi
+    cat <<EOF
+{"workflow_runs":[{"id":101,"name":"CI","display_title":"Alpha PR","head_branch":"topic","head_sha":"1234567","event":"pull_request","status":"$status","conclusion":"success","actor":{"login":"morgan"},"repository":{"id":11},"pull_requests":[{"number":10,"base":{"repo":{"id":11}}}],"created_at":"2026-11-25T09:00:00Z","updated_at":"2026-11-25T09:00:30Z"}]}
 EOF
     ;;
     repos/acme/beta/actions/runs*) cat <<'EOF'
@@ -1435,6 +1479,16 @@ esac
         QVERIFY(backend.previous().isEmpty());
         QTRY_VERIFY(backend.organizationProgress().isEmpty());
         QVERIFY(backend.error().isEmpty());
+        QCOMPARE(backend.activeCount(), 1);
+        QSignalSpy finished(&backend, &Backend::buildFinished);
+        {
+            QFile marker(temporary.filePath("finished"));
+            QVERIFY(marker.open(QIODevice::WriteOnly));
+        }
+        backend.refresh();
+        QTRY_VERIFY(backend.organizationProgress().isEmpty());
+        QCOMPARE(backend.selectedBuild()["state"].toString(), QString("success"));
+        QCOMPARE(finished.size(), 1);
         QTest::keyClick(window, Qt::Key_A);
         QVERIFY(backend.runningOnly());
         QVERIFY(backend.builds().isEmpty());
@@ -1451,9 +1505,11 @@ esac
         QTest::keyClick(window, Qt::Key_Return);
         QTRY_VERIFY(backend.pullAuthor().isEmpty());
         QCOMPARE(backend.builds().size(), 2);
+        QCOMPARE(backend.activeCount(), 0);
         QTRY_VERIFY(backend.organizationProgress().isEmpty());
         QTRY_VERIFY(!backend.busy());
         QVERIFY(backend.error().isEmpty());
+        QCOMPARE(finished.size(), 1);
         QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
     }
 
@@ -1465,7 +1521,25 @@ esac
         QVERIFY(gh.open(QIODevice::WriteOnly));
         gh.write(R"(#!/bin/sh
 for path do :; done
-printf '%s\n' "$path" >> "$(dirname "$0")/requests"
+workdir=$(dirname "$0")
+printf '%s\n' "$path" >> "$workdir/requests"
+case "$path" in
+  repos/batch-org/?*/actions/runs*)
+    if [ -f "$workdir/fail" ]; then
+      printf 'HTTP/1.1 404 Not Found\r\n\r\n'
+      printf '%s\n' 'Repository unavailable' >&2
+      exit 1
+    fi
+    if [ -f "$workdir/rate" ]; then
+      if mkdir "$workdir/rate-once" 2>/dev/null; then
+        printf 'HTTP/1.1 429 Too Many Requests\r\nRetry-After: 2\r\n\r\n'
+        printf '%s\n' 'Too many requests' >&2
+        exit 1
+      fi
+      sleep 0.1
+    fi
+    ;;
+esac
 printf 'HTTP/1.1 200 OK\r\nETag: "fresh"\r\n\r\n'
 case "$path" in
   orgs/batch-org/repos*)
@@ -1511,6 +1585,33 @@ esac
         QCOMPARE(paths.size(), 52);
         QVERIFY(paths[26].startsWith("orgs/batch-org/repos?"));
         QVERIFY(backend.error().isEmpty());
+
+        {
+            QFile marker(temporary.filePath("rate"));
+            QVERIFY(marker.open(QIODevice::WriteOnly));
+        }
+        backend.refresh();
+        QTRY_VERIFY(backend.organizationProgress().contains("rate limit"));
+        QTest::qWait(150);
+        const auto pausedAt = requests().size();
+        QVERIFY(pausedAt <= 57); // The catalog and at most four in-flight requests.
+        QTest::qWait(350);
+        QCOMPARE(requests().size(), pausedAt);
+        QTRY_VERIFY_WITH_TIMEOUT(backend.organizationProgress().isEmpty(), 8000);
+        QTRY_VERIFY(!backend.busy());
+        QCOMPARE(requests().size(), 78);
+        QVERIFY(backend.error().contains("1 repositories"));
+
+        const auto previousUpdate = backend.lastUpdated();
+        {
+            QFile marker(temporary.filePath("fail"));
+            QVERIFY(marker.open(QIODevice::WriteOnly));
+        }
+        backend.refresh();
+        QTRY_VERIFY(backend.organizationProgress().isEmpty());
+        QTRY_VERIFY(!backend.busy());
+        QCOMPARE(backend.lastUpdated(), previousUpdate);
+        QVERIFY(backend.error().contains("25 repositories"));
     }
 };
 

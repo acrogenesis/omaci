@@ -8,6 +8,7 @@ Rectangle {
     property bool open: false
     // Nothing to go back to: the window has no repository yet.
     property bool required: false
+    property bool allowOrganizations: true
     property var repositories: []
     property bool loading: false
     property string error: ""
@@ -26,10 +27,11 @@ Rectangle {
     readonly property var shown: {
         const orgPrefix = /^org:/i.test(typed)
         const slug = (orgPrefix ? typed.slice(4) : typed).toLowerCase()
-        const organizations = Array.from(new Set(repositories.map(repo => repo.organization).filter(Boolean)))
+        const organizations = allowOrganizations
+            ? Array.from(new Set(repositories.map(repo => repo.organization).filter(Boolean))) : []
         const orgs = organizations.filter(name => orgPrefix ? name.toLowerCase().includes(slug)
                                                            : name.toLowerCase() === slug)
-        if (orgPrefix && /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/.test(slug)
+        if (allowOrganizations && orgPrefix && /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/.test(slug)
                 && !orgs.some(name => name.toLowerCase() === slug))
             orgs.unshift(slug)
         orgs.sort((a, b) => Number(b.toLowerCase() === slug) - Number(a.toLowerCase() === slug))
@@ -92,7 +94,7 @@ Rectangle {
 
         Panel {
             anchors.fill: parent
-            title: "repositories & organizations"
+            title: menu.allowOrganizations ? "repositories & organizations" : "repositories"
             note: menu.loading ? "asking github…" : menu.shown.length + " available"
             corner: menu.required ? "pick one to watch" : "esc closes"
             focused: true
@@ -144,7 +146,7 @@ Rectangle {
                     x: input.x
                     y: 4
                     visible: input.text === ""
-                    text: "search, or enter owner/name or org:name"
+                    text: menu.allowOrganizations ? "search, or enter owner/name or org:name" : "search, or enter owner/name"
                     color: theme.faint
                 }
             }

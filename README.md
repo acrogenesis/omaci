@@ -181,6 +181,8 @@ Omaci saves the last target and each organization's PR author filter in `~/.loca
 omaci --demo
 ```
 
+The demo shows an example repository. Organization watching uses live GitHub data.
+
 Invented builds for an invented `acme/storefront`: one running, with a log that grows and a deploy still to come, one that failed in two tests, and a dozen earlier ones to estimate from. It really runs: leave it open for a few minutes and the build deploys and passes. The screenshots above are that.
 
 ## Building
