@@ -215,6 +215,7 @@ private:
                                       const QString &error, bool receivedRuns);
     void recordOrganizationActivity(const QString &repository, const QVariantList &runs, bool receivedRuns);
     void failOrganizationPoll(const QString &error);
+    void flushOrganizationChanges();
     void publishOrganizationRuns();
     RepositoryRuns &organizationRuns();
     QHash<QString, QString> &organizationErrors();
@@ -320,6 +321,7 @@ private:
     RepositoryRuns m_orgAuthorRuns;
     QHash<QString, QString> m_orgErrors;
     QHash<QString, QString> m_orgAuthorErrors;
+    QTimer m_orgPublishTimer;
     bool m_showSkipped = false;
     bool m_runningOnly = false;
     QVariantList m_repositories;

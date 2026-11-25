@@ -28,6 +28,7 @@ static constexpr int MaxProcesses = 4;
 static constexpr int OrganizationConcurrency = MaxProcesses;
 static constexpr int OrganizationRunsPerRepo = 30;
 static constexpr int OrganizationBatchSize = 24;
+static constexpr int OrganizationPublishInterval = 1000;
 static constexpr int OrganizationActiveInterval = 15000;
 static constexpr int OrganizationCatalogInterval = 5 * 60 * 1000;
 static constexpr int OrganizationQuietInterval = 10 * 60 * 1000;
@@ -107,6 +108,12 @@ Backend::Backend(const QString &repo, bool demo, QObject *parent)
     connect(&m_requestWake, &QTimer::timeout, this, [this] {
         pump();
         emit organizationProgressChanged();
+    });
+    m_orgPublishTimer.setSingleShot(true);
+    connect(&m_orgPublishTimer, &QTimer::timeout, this, [this] {
+        if (m_orgPoll.receivedRuns > 0)
+            markUpdated();
+        flushOrganizationChanges();
     });
     // The time left changes with the clock, not only with what GitHub says.
     m_tick.setInterval(1000);
@@ -277,8 +284,11 @@ void Backend::noteRateLimit(bool graphql, const QByteArray &output, const QStrin
             m_secondaryRetryAt = now + m_secondaryBackoff;
         }
     }
-    if (primary || secondary || primaryRetry > now)
+    if (primary || secondary || primaryRetry > now) {
+        if (m_orgPublishTimer.isActive())
+            m_orgPublishTimer.start(0);
         emit organizationProgressChanged();
+    }
 }
 
 // A JSON request that sends along the ETag of the answer it got last time.
@@ -289,16 +299,17 @@ void Backend::api(const QString &path, Done done, const QString &projection, qui
         return;
     }
     QStringList args{"api", "--include"};
-    if (m_kept.contains(path))
-        args << "-H" << "If-None-Match: " + QString::fromLatin1(m_kept[path].etag);
+    const auto cached = m_kept.value(path);
+    if (!cached.etag.isEmpty())
+        args << "-H" << "If-None-Match: " + QString::fromLatin1(cached.etag);
     if (!projection.isEmpty())
         args << "--jq" << projection;
     args << path;
-    gh(args, [this, path, done, scope = m_scope](bool ok, const QByteArray &out, const QString &err) {
+    gh(args, [this, path, done, cached, scope = m_scope, organizationPoll]
+             (bool ok, const QByteArray &out, const QString &err) {
         const auto response = httpReply(out);
-        if (response.status == 304 && m_kept.contains(path)) {
-            const auto cached = m_kept.value(path).body;
-            done(true, cached, {});
+        if (response.status == 304 && !cached.etag.isEmpty()) {
+            done(true, cached.body, {});
             return;
         }
         if (!ok) {
@@ -306,7 +317,7 @@ void Backend::api(const QString &path, Done done, const QString &projection, qui
             return;
         }
         const auto etag = response.header("etag");
-        if (scope == m_scope && !etag.isEmpty())
+        if (scope == m_scope && (!organizationPoll || organizationPoll == m_orgPollId) && !etag.isEmpty())
             m_kept[path] = {etag, response.body};
         done(true, response.body, {});
     }, organizationPoll);
@@ -366,6 +377,7 @@ void Backend::refreshRuns(bool force) {
     m_poll.stop();
     if (!organization().isEmpty()) {
         ++m_orgPollId;
+        m_orgPublishTimer.stop();
         m_orgPoll = {};
         m_orgPoll.force = force;
         emit organizationProgressChanged();
@@ -523,6 +535,8 @@ void Backend::startOrganizationRuns(const QVariantList &repositories) {
     organizationErrors().removeIf(outsideScope);
     m_orgPoll.emptyScope = repositories.isEmpty();
     m_orgPoll.repositories = repositories;
+    if (m_orgPoll.changed)
+        m_orgPublishTimer.start(OrganizationPublishInterval);
     if (m_pullAuthor.isEmpty()) {
         m_orgActivity.removeIf([&current](const auto &entry) { return !current.contains(entry.key()); });
         const auto now = QDateTime::currentMSecsSinceEpoch();
@@ -537,17 +551,23 @@ void Backend::startOrganizationRuns(const QVariantList &repositories) {
         due.removeIf([this, now](const auto &value) { return organizationRepositoryDue(value.toMap(), now) > now; });
         std::stable_sort(due.begin(), due.end(), [this, now](const auto &first, const auto &second) {
             const auto firstRepo = first.toMap(), secondRepo = second.toMap();
-            const bool firstActive = m_orgActivity.value(firstRepo["name"].toString()).active;
-            const bool secondActive = m_orgActivity.value(secondRepo["name"].toString()).active;
-            // Favor active runs briefly and let overdue repositories catch up.
-            const auto firstDue = organizationRepositoryDue(firstRepo, now) - (firstActive ? OrganizationActiveInterval : 0);
-            const auto secondDue = organizationRepositoryDue(secondRepo, now) - (secondActive ? OrganizationActiveInterval : 0);
+            const auto firstDue = organizationRepositoryDue(firstRepo, now);
+            const auto secondDue = organizationRepositoryDue(secondRepo, now);
             if (firstDue != secondDue)
                 return firstDue < secondDue;
             return firstRepo["pushedAt"].toString() > secondRepo["pushedAt"].toString();
         });
-        if (due.size() > OrganizationBatchSize)
-            due.resize(OrganizationBatchSize);
+        const auto firstIdle = std::stable_partition(due.begin(), due.end(), [this](const auto &value) {
+            return m_orgActivity.value(value.toMap()["name"].toString()).active;
+        });
+        if (due.size() > OrganizationBatchSize) {
+            // Leave room for both active rechecks and initial/quiet checks.
+            const auto active = firstIdle - due.begin();
+            const auto idle = due.size() - active;
+            const auto activeSlots = std::min<qsizetype>(active, std::max<qsizetype>(
+                OrganizationBatchSize / 2, OrganizationBatchSize - idle));
+            due = due.first(activeSlots) + due.mid(active, OrganizationBatchSize - activeSlots);
+        }
     }
     emit organizationProgressChanged();
     fetchOrganizationRuns();
@@ -570,6 +590,7 @@ void Backend::fetchOrganizationRuns() {
         return;
 
     m_fetchingRuns = false;
+    m_orgPublishTimer.stop();
     QStringList errors;
     if (m_pullAuthor.isEmpty() && !m_orgCatalogError.isEmpty())
         errors << m_orgCatalogError;
@@ -582,13 +603,20 @@ void Backend::fetchOrganizationRuns() {
         markUpdated();
         remember(m_repo);
     }
-    const auto previousKey = m_key;
-    if (m_orgPoll.changed)
-        publishOrganizationRuns();
-    if (m_orgPoll.checkedSelection || m_key != previousKey)
+    flushOrganizationChanges();
+    if (std::exchange(m_orgPoll.checkedSelection, false))
         fetchJobs();
     emit organizationProgressChanged();
     schedule();
+}
+
+void Backend::flushOrganizationChanges() {
+    if (!std::exchange(m_orgPoll.changed, false))
+        return;
+    const auto previousKey = m_key;
+    publishOrganizationRuns();
+    if (std::exchange(m_orgPoll.checkedSelection, false) || m_key != previousKey)
+        fetchJobs();
 }
 
 void Backend::publishOrganizationRuns() {
@@ -637,7 +665,7 @@ void Backend::fetchOrganizationRepository(const QVariantMap &repository) {
         finishOrganizationRepository(repo, runs, {}, true);
     }, "{workflow_runs: [.workflow_runs[] | {id, name, display_title, head_branch, event, "
        "actor: {login: .actor.login}, head_repository: {id: .head_repository.id}, repository: {id: .repository.id}, "
-       "pull_requests: [.pull_requests[]? | {number, base: {repo: {id: .base.repo.id}}, "
+       "pull_requests: [.pull_requests[]? | {number, base: {ref: .base.ref, repo: {id: .base.repo.id}}, "
        "head: {sha: .head.sha, ref: .head.ref, repo: {id: .head.repo.id}}}], "
        "run_number, run_attempt, head_sha, html_url, status, conclusion, run_started_at, created_at, updated_at}]}",
        m_orgPollId);
@@ -683,11 +711,14 @@ void Backend::finishOrganizationRepository(const QString &repository, const QVar
             const auto run = value.toMap();
             return matchesPullAuthor(run) && (!m_runningOnly || GitHub::isActive(run["state"].toString()));
         });
-        if (firstMatch && m_orgPoll.changed) {
-            m_orgPoll.changed = false;
-            markUpdated();
-            publishOrganizationRuns();
-            fetchJobs();
+        if (m_orgPoll.changed) {
+            if (firstMatch) {
+                m_orgPublishTimer.stop();
+                markUpdated();
+                flushOrganizationChanges();
+            } else if (!m_orgPublishTimer.isActive()) {
+                m_orgPublishTimer.start(OrganizationPublishInterval);
+            }
         }
         emit organizationProgressChanged();
     }
@@ -1485,6 +1516,7 @@ void Backend::show(const QString &asked, const QString &sha) {
     if (repo != m_repo) {
         ++m_scope;
         ++m_orgPollId;
+        m_orgPublishTimer.stop();
         m_repo = repo;
         m_fetchingRuns = false;
         m_listRuns.clear();
@@ -1585,6 +1617,7 @@ void Backend::setPullAuthor(const QString &author) {
         QSettings(stateFile(), QSettings::IniFormat).setValue("pullAuthor/" + org, login);
     // A filter change starts its own poll while the old requests wind down.
     ++m_orgPollId;
+    m_orgPublishTimer.stop();
     m_fetchingRuns = false;
     m_orgRefreshRequested = false;
     m_orgManualRemaining.clear();

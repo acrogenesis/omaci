@@ -244,6 +244,33 @@ private slots:
         QVERIFY(backend.builds().isEmpty());
     }
 
+    void targetBuildKeySurvivesAdvancingThePullRequestHead()
+    {
+        QByteArray json = R"({"workflow_runs":[
+            {"id":1,"event":"push","head_sha":"original","head_branch":"topic","head_repository":{"id":9}},
+            {"id":2,"event":"pull_request_target","head_sha":"original","head_branch":"topic","head_repository":{"id":9},
+             "repository":{"id":9},"pull_requests":[{"number":11,"base":{"sha":"base","ref":"main","repo":{"id":9}},
+             "head":{"sha":"original","ref":"topic","repo":{"id":9}}}]}
+        ]})";
+        const auto builds = [](const QByteArray &source) {
+            auto runs = GitHub::parseRuns(source);
+            for (auto &value : runs) {
+                auto run = value.toMap();
+                run["repository"] = "acme/shop";
+                value = run;
+            }
+            return GitHub::builds(runs);
+        };
+        const auto before = builds(json);
+        QCOMPARE(before.size(), 1);
+        json.replace(R"("head":{"sha":"original")", R"("head":{"sha":"newer")");
+        json.replace(R"("base":{"sha":"base")", R"("base":{"sha":"original")");
+        const auto after = builds(json);
+        QCOMPARE(after.size(), 1);
+        QCOMPARE(after.first().toMap()["key"], before.first().toMap()["key"]);
+        QCOMPARE(after.first().toMap()["runIds"].toList(), QVariantList({1LL, 2LL}));
+    }
+
     void opensOnTheRepositoryWatchedLast()
     {
         // Nothing watched yet: the window stays empty and shows the menu.

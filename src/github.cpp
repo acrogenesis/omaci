@@ -77,11 +77,13 @@ QVariantList parseRuns(const QByteArray &json, QString *error) {
         const auto sha = run["head_sha"].toString();
         const bool pullEvent = isPullRequestEvent(event);
         QVariantList pullNumbers;
-        bool onPullHead = false;
+        bool onPullHead = event == "pull_request_target" && repositoryId && headRepositoryId &&
+                          headRepositoryId != repositoryId && !branch.isEmpty() && !sha.isEmpty();
         if (repositoryId && (pullEvent || event == "push" || event == "workflow_dispatch")) {
             for (const auto &value : run["pull_requests"].toArray()) {
                 const auto pull = value.toObject();
-                const auto baseId = pull["base"].toObject()["repo"].toObject()["id"].toVariant().toLongLong();
+                const auto base = pull["base"].toObject();
+                const auto baseId = base["repo"].toObject()["id"].toVariant().toLongLong();
                 const auto number = pull["number"].toInt();
                 if (baseId != repositoryId || number <= 0)
                     continue;
@@ -93,7 +95,10 @@ QVariantList parseRuns(const QByteArray &json, QString *error) {
                     continue;
                 if (!pullNumbers.contains(number))
                     pullNumbers << number;
-                onPullHead |= sameBranch && !sha.isEmpty() && head["sha"].toString() == sha;
+                const auto baseRef = base["ref"].toString();
+                const bool differentFromBase = headRepositoryId != baseId || (!baseRef.isEmpty() && baseRef != branch);
+                // GitHub can update the embedded PR head after a run was created.
+                onPullHead |= sameBranch && !sha.isEmpty() && (head["sha"].toString() == sha || differentFromBase);
             }
         }
         runs << QVariantMap{
