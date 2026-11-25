@@ -1,7 +1,7 @@
 QT += core gui network qml quick quickcontrols2
 
 CONFIG += c++17 release
-TARGET = ciwatch
+TARGET = omaci
 TEMPLATE = app
 
 HEADERS += \

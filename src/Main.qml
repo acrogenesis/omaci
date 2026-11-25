@@ -17,7 +17,7 @@ ApplicationWindow {
     visible: true
     // The answer in the title too, where the compositor and the window
     // switcher show it without the window being in front.
-    title: "CI Watch" + (backend.repo ? " · " + backend.repo : "") + (win.buildActive && win.headline ? " · " + win.headline : "")
+    title: "Omaci" + (backend.repo ? " · " + backend.repo : "") + (win.buildActive && win.headline ? " · " + win.headline : "")
     color: theme.background
 
     readonly property real cw: theme.cellWidth
@@ -277,7 +277,7 @@ ApplicationWindow {
                 anchors.rightMargin: win.cw
                 spacing: win.cw
 
-                Mono { text: "ciwatch"; color: theme.accent; font.bold: true }
+                Mono { text: "omaci"; color: theme.accent; font.bold: true }
                 Keycap {
                     key: "g"
                     label: backend.repo || "pick a repository"

@@ -1,6 +1,6 @@
-# CI Watch for Omarchy
+# Omaci
 
-<img src="screenshots/running.png" width="800" alt="CI Watch on a running build: about 3m 20s left in large type, a bar with the usual finish marked on it, the earlier builds as small bars, the jobs as a timeline with a line at now, and under that the steps and the log of the test job">
+<img src="screenshots/running.png" width="800" alt="Omaci on a running build: about 3m 20s left in large type, a bar with the usual finish marked on it, the earlier builds as small bars, the jobs as a timeline with a line at now, and under that the steps and the log of the test job">
 
 The builds of one repository, live, in a window of their own. How far the build is and about how long it still has, worked out from how long the earlier ones took. Its jobs on a timeline, the steps of the one you picked, and its log, growing at the bottom while the job is still running.
 
@@ -11,23 +11,23 @@ It is a native Qt Quick app that looks like a terminal program, because that is 
 ## Install
 
 ```bash
-git clone https://github.com/jankeesvw/ciwatch.git
-cd ciwatch
+git clone https://github.com/jankeesvw/omaci.git
+cd omaci
 bin/install
 ```
 
-That builds the app and installs it as an Arch package with `makepkg -fsi`, so it shows up in the app launcher as CI Watch, with its own icon. It asks for your password once, for the `pacman -U` at the end.
+That builds the app and installs it as an Arch package with `makepkg -fsi`, so it shows up in the app launcher as Omaci, with its own icon. It asks for your password once, for the `pacman -U` at the end.
 
 ## Requirements
 
-Omarchy, which already ships everything the build needs: Qt 6, `qmake6` and a compiler. And the [`gh` CLI](https://cli.github.com), logged in with `gh auth login`. Every request goes through it, so CI Watch never sees or stores a token, and private repositories work exactly as far as your `gh` login can see them. A `gh` installed through mise is found too, also when the launcher starts the app without your shell's `PATH`.
+Omarchy, which already ships everything the build needs: Qt 6, `qmake6` and a compiler. And the [`gh` CLI](https://cli.github.com), logged in with `gh auth login`. Every request goes through it, so Omaci never sees or stores a token, and private repositories work exactly as far as your `gh` login can see them. A `gh` installed through mise is found too, also when the launcher starts the app without your shell's `PATH`.
 
 ## Which repository
 
 ```bash
-ciwatch                                  # the repository of the directory you are in
-ciwatch basecamp/omarchy                 # any other
-ciwatch basecamp/omarchy --sha 4f1c2ab   # open on the build of one commit
+omaci                                  # the repository of the directory you are in
+omaci basecamp/omarchy                 # any other
+omaci basecamp/omarchy --sha 4f1c2ab   # open on the build of one commit
 ```
 
 Started without one, from the launcher say, it opens on the repository of the directory it was started in, and outside a checkout on the one you watched last. The first time, when there is no last one, it opens on a menu of every repository your `gh` login can see, the most recently pushed first, and `G` brings that menu up whenever you want another. Typing narrows it (`acme api` finds `acme/storefront-api`), the arrows and Enter pick, and a whole `owner/name` that isn't yours, a public repository of somebody else's, can be opened as typed.
@@ -36,9 +36,11 @@ There is only ever one window. Starting it again while it is open hands the repo
 
 With `--sha` the build of that commit is the one selected, and the others stay in the list around it, because they are what the estimate is made from. A commit too old to be among the latest builds is looked up by its sha, which has to be the whole one for that.
 
+It was called CI Watch before, and `ciwatch` still starts it.
+
 ## With GitHub Build Monitor
 
-The [GitHub Build Monitor](https://github.com/jankeesvw/omarchy-github-build-monitor) bar widget opens a build here when you press Enter on it, as long as CI Watch is installed. `g` in the widget still opens the build on GitHub.
+The [GitHub Build Monitor](https://github.com/jankeesvw/omarchy-github-build-monitor) bar widget opens a build here when you press Enter on it, as long as Omaci is installed. `g` in the widget still opens the build on GitHub.
 
 ## What counts as a build
 
@@ -88,7 +90,7 @@ Pick a build and the job worth looking at is already selected: the one that fail
 
 <img src="screenshots/failure.png" width="800" alt="A failed build selected: the test job is red on the timeline, its RSpec tests step is red, a panel above the log names the two failed examples with their files, and the log shows the Failures section from its first line">
 
-The runner's own error line, "Process completed with exit code 1.", is the last line of a failed step and says nothing. What the test runner printed says everything, and with tests running in parallel it can sit a hundred lines higher, behind the summaries of the processes that passed. CI Watch reads the failed step for what test runners print: RSpec's `Failures:` section and its `rspec ./spec/…` lines, Cucumber's `Failing Scenarios:`, Minitest's `Failure:` blocks, pytest's `FAILED`, Jest's `●`, Go's `--- FAIL:`, and error annotations that name a file. The exit code line is only where it lands when none of those are there.
+The runner's own error line, "Process completed with exit code 1.", is the last line of a failed step and says nothing. What the test runner printed says everything, and with tests running in parallel it can sit a hundred lines higher, behind the summaries of the processes that passed. Omaci reads the failed step for what test runners print: RSpec's `Failures:` section and its `rspec ./spec/…` lines, Cucumber's `Failing Scenarios:`, Minitest's `Failure:` blocks, pytest's `FAILED`, Jest's `●`, Go's `--- FAIL:`, and error annotations that name a file. The exit code line is only where it lands when none of those are there.
 
 A failed job opens with the first failure at the top of the log, and a panel above the log names each one with its file and line. Click one to go there. `E` and `Shift+E` walk through them. The lines of a failure have a red edge, so they are easy to find again while scrolling.
 
@@ -104,7 +106,7 @@ Every step is a way into the log. Click one, or press `N` and `P`, and the log s
 
 ## Following a running build
 
-While anything is running, CI Watch asks GitHub every 6 seconds; when everything is done, once a minute, and right away when you press `Space`, `R` or `Ctrl+R`. The log of a running job is fetched again on every poll, and when it only grew, the new lines are added to the bottom rather than the whole log being replaced, so the view keeps its place.
+While anything is running, Omaci asks GitHub every 6 seconds; when everything is done, once a minute, and right away when you press `Space`, `R` or `Ctrl+R`. The log of a running job is fetched again on every poll, and when it only grew, the new lines are added to the bottom rather than the whole log being replaced, so the view keeps its place.
 
 It follows the end as long as you are at the end. Scroll up to read something and it stops, and a button in the corner brings it back, as does `End`. Scroll back down to the bottom and it follows again.
 
@@ -163,12 +165,12 @@ The whole palette, live: background, text, accent, and the theme's own green, re
 
 ## Privacy
 
-The one thing written to disk is the name of the repository you watched last, in `~/.local/state/ciwatch/state.ini`, so the next window opens on it. Builds, jobs and logs live in memory while the window is open and are gone when it closes. The only things that leave the app are the `gh api` calls to GitHub and a `notify-send` when a build finishes. Log lines are drawn as plain text, so nothing in a log can make the window load anything.
+The one thing written to disk is the name of the repository you watched last, in `~/.local/state/omaci/state.ini`, so the next window opens on it. Builds, jobs and logs live in memory while the window is open and are gone when it closes. The only things that leave the app are the `gh api` calls to GitHub and a `notify-send` when a build finishes. Log lines are drawn as plain text, so nothing in a log can make the window load anything.
 
 ## Trying it without GitHub
 
 ```bash
-ciwatch --demo
+omaci --demo
 ```
 
 Invented builds for an invented `acme/storefront`: one running, with a log that grows and a deploy still to come, one that failed in two tests, and a dozen earlier ones to estimate from. It really runs: leave it open for a few minutes and the build deploys and passes. The screenshots above are that.
@@ -176,21 +178,21 @@ Invented builds for an invented `acme/storefront`: one running, with a log that 
 ## Building
 
 ```bash
-bin/build     # build/ciwatch
+bin/build     # build/omaci
 bin/test      # the Qt tests, offscreen
-bin/install   # build/ciwatch, as a package
+bin/install   # build/omaci, as a package
 ```
 
 The tests cover the estimate, the comparison with the build before, the step-to-line mapping and the failure detection (against the log of a real failed job, with what could identify the project replaced), the link that is copied, and the window itself, driven by its keys on the demo data.
 
-`ciwatch --demo --screenshot shot.png` draws the window into a file without opening it, which is how the pictures here were made. `--scene build+,help` walks it somewhere first, and `--theme <directory>` reads the colours from somewhere other than the current Omarchy theme.
+`omaci --demo --screenshot shot.png` draws the window into a file without opening it, which is how the pictures here were made. `--scene build+,help` walks it somewhere first, and `--theme <directory>` reads the colours from somewhere other than the current Omarchy theme.
 
 How it is put together, and why, is in [docs/design.md](docs/design.md).
 
 ## Removing
 
 ```bash
-sudo pacman -R ciwatch
+sudo pacman -R omaci
 ```
 
 ## License

@@ -1,4 +1,4 @@
-// ciwatch — the builds of one repository, live: how far, how long still, and what failed.
+// omaci — the builds of one repository, live: how far, how long still, and what failed.
 
 #include <QCommandLineParser>
 #include <QGuiApplication>
@@ -21,7 +21,7 @@
 // One window, however often the bar widget asks for one: a second launch
 // hands its repository and commit to the window that is already open.
 static QString socketName() {
-    return QString("ciwatch-%1").arg(qEnvironmentVariable("USER", "user"));
+    return QString("omaci-%1").arg(qEnvironmentVariable("USER", "user"));
 }
 
 static bool handOver(const QString &repo, const QString &sha) {
@@ -35,7 +35,7 @@ static bool handOver(const QString &repo, const QString &sha) {
     return true;
 }
 
-// The repository of the checkout ciwatch is started in: its origin on
+// The repository of the checkout omaci is started in: its origin on
 // GitHub, or else the first remote that is on GitHub. Empty outside one.
 static QString repoOfDirectory() {
     QProcess git;
@@ -62,7 +62,7 @@ static void raise(QQuickWindow *window) {
     // Wayland doesn't let an app take focus on its own; on Hyprland the
     // compositor can be asked to do it.
     if (!QStandardPaths::findExecutable("hyprctl").isEmpty())
-        QProcess::startDetached("hyprctl", {"dispatch", "focuswindow", "class:^(ciwatch)$"});
+        QProcess::startDetached("hyprctl", {"dispatch", "focuswindow", "class:^(omaci)$"});
 }
 
 // Draws the window into a file without ever showing it: walks through the
@@ -118,13 +118,13 @@ int main(int argc, char *argv[]) {
     }
 
     QGuiApplication app(argc, argv);
-    app.setApplicationName("ciwatch");
-    app.setApplicationVersion("0.3.0");
+    app.setApplicationName("omaci");
+    app.setApplicationVersion("0.4.0");
 
-    // Matches the window to ciwatch.desktop, so the compositor (Wayland app_id)
+    // Matches the window to omaci.desktop, so the compositor (Wayland app_id)
     // and the launcher pick up the installed icon.
-    app.setDesktopFileName("ciwatch");
-    app.setWindowIcon(QIcon::fromTheme("ciwatch"));
+    app.setDesktopFileName("omaci");
+    app.setWindowIcon(QIcon::fromTheme("omaci"));
 
     QCommandLineParser parser;
     parser.setApplicationDescription("The builds of one repository, live: how far, how long still, and what failed.");
@@ -169,7 +169,7 @@ int main(int argc, char *argv[]) {
 
     // A screenshot shows the app's own colours unless it is given a theme,
     // so the README's pictures don't depend on whose desktop drew them.
-    Theme theme(parser.isSet(themeOption) ? parser.value(themeOption) : shot ? QString("/nonexistent/ciwatch") : QString());
+    Theme theme(parser.isSet(themeOption) ? parser.value(themeOption) : shot ? QString("/nonexistent/omaci") : QString());
     if (parser.isSet(radiusOption))
         theme.setRadius(parser.value(radiusOption).toInt());
     Backend backend(repo, demo);

@@ -1095,7 +1095,7 @@ void Backend::copyLog() {
 }
 
 static QString stateFile() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + "/ciwatch/state.ini";
+    return QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + "/omaci/state.ini";
 }
 
 QString Backend::rememberedRepo() {
@@ -1186,7 +1186,7 @@ void Backend::notify(const QVariantMap &build) {
                                     : QString("%1s").arg(seconds);
     const auto summary = QString("Build %1").arg(verbs.value(build["state"].toString(), "finished"));
     const auto body = QString("%1\n%2 · %3").arg(build["title"].toString(), build["branch"].toString(), took);
-    QStringList args{"--app-name=CI Watch", "--icon=ciwatch", summary, body};
+    QStringList args{"--app-name=Omaci", "--icon=omaci", summary, body};
     if (build["state"] == "failure")
         args.prepend("--urgency=critical");
     // Not from a demo, and not from the tests, which run without a screen.

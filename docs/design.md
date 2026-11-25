@@ -1,4 +1,6 @@
-# CI Watch, redesigned
+# Omaci, redesigned
+
+The app was called CI Watch until this redesign.
 
 This is the design behind the `fable-redesign` branch: what the window shows, why, and how the parts that guess (the time left, where a failure is) come to their answer.
 
@@ -18,7 +20,7 @@ The unit in the list is no longer a workflow run but a build, defined the way th
 
 Runs started by anything else (a schedule, an issue comment, Dependabot's own updater) also attach to the head of the branch. Rolling those in would stretch a four minute build to twelve hours because a nightly job ran on the same commit, so each of them stays an entry of its own.
 
-`ciwatch <repo> --sha <sha>` used to filter the list down to that commit. Now it selects that build and leaves the others around it, because the others are what the estimate is made from. A commit too old to be in the list is fetched by its sha and added.
+`omaci <repo> --sha <sha>` (then `ciwatch`) used to filter the list down to that commit. Now it selects that build and leaves the others around it, because the others are what the estimate is made from. A commit too old to be in the list is fetched by its sha and added.
 
 ## The window
 

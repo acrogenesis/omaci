@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Omaci
+Comment=Live GitHub Actions builds: how far, how long still, and what failed
+Exec=omaci
+Icon=omaci
+Terminal=false
+Categories=Development;
+Keywords=github;actions;ci;build;logs;ciwatch;
+StartupWMClass=omaci

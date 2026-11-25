@@ -95,7 +95,7 @@ static Estimate::Earlier earlier(double test, double image, double deploy) {
 }
 
 static QString stateFile() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + "/ciwatch/state.ini";
+    return QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + "/omaci/state.ini";
 }
 
 // QTest only types whole strings into widgets; a window gets them a key at a time.
@@ -104,7 +104,7 @@ static void typeInto(QWindow *window, const QString &text) {
         QTest::keyClick(window, c.toLatin1());
 }
 
-class CiwatchTests : public QObject {
+class OmaciTests : public QObject {
     Q_OBJECT
 
 private slots:
@@ -1312,5 +1312,5 @@ private slots:
     }
 };
 
-QTEST_MAIN(CiwatchTests)
-#include "ciwatch_tests.moc"
+QTEST_MAIN(OmaciTests)
+#include "omaci_tests.moc"
