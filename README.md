@@ -60,7 +60,7 @@ A finished build keeps the bar, now showing whether it was faster or slower than
 
 <img src="screenshots/compare.png" width="800" alt="A failed pull request next to the main build before it: a row says that build passed in 6m 33s and that test broke and build is 1m 9s slower, every job has a thin line under its bar where it ran last time, and a column gives each job's earlier time">
 
-Under the bar is the build main had before this one: what it was, how it ended, how long it took, and in a few words what is different now, the worst first: "test broke, build 1m 9s slower". Click that row or press `B` to go to it.
+Under the bar is the build main had before this one: what it was, how it ended, how long it took, and in a few words what is different now, the worst first: "test broke, build 1m 9s slower". Click that row or press `B` to go to it; `Shift+B` brings you back to where you were.
 
 On the timeline every job has a thin line under its bar where the same job ran in that build, so slower and later show without reading a number, and the column on the right has the time it took then. An arrow up in yellow is slower now, an arrow down in green is faster, and a job that fails now but passed then says so in red. Differences under five seconds or fifteen percent get no colour, because runners are never exactly as fast twice.
 
@@ -126,7 +126,7 @@ Every one of these is also something you can click.
 | `Y` | copy the failure and its link |
 | `Shift+C` | copy the whole log |
 | `O` / `Enter` | open the job on GitHub |
-| `B` | the build main had before this one |
+| `B` / `Shift+B` | the build main had before this one, and back |
 | `Z` | tall log, and back |
 | `F` | only the branch of this build, and back |
 | `S` | show or hide skipped builds |

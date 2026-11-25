@@ -641,7 +641,17 @@ private slots:
                                        plain("flaky", "success", 10, 30),   // fixed
                                        plain("audit", "success", 5, 20)};   // wasn't there
         const auto rows = Compare::jobs(now, then);
+        // deploy is on both lists (skipped now), so nothing is missing yet.
         QCOMPARE(rows.size(), 6);
+        // A job only the earlier build had shows once this build is done,
+        // not while it runs: GitHub may not have created it yet.
+        const auto missing = Compare::jobs({plain("test", "success", 10, 200)}, then, true);
+        QCOMPARE(missing.size(), 5);
+        QCOMPARE(missing[1].key, QString("build"));
+        QCOMPARE(missing[1].verdict, QString("gone"));
+        QCOMPARE(missing[1].then, 100.0);
+        QVERIFY(Compare::notes(missing).contains("deploy didn't run"));
+        QCOMPARE(Compare::jobs({plain("test", "running", 10, 50)}, then, false).size(), 1);
         QCOMPARE(rows[0].verdict, QString("broke"));
         QCOMPARE(rows[0].then, 200.0);
         QCOMPARE(rows[1].verdict, QString("slower"));
@@ -657,9 +667,9 @@ private slots:
         QCOMPARE(Compare::notes(rows), QStringList({"test broke", "build 1m 10s slower", "flaky fixed"}));
 
         // A job that is still running says nothing until it has outlasted the last time.
-        auto running = Compare::jobs({plain("test", "running", 10, 100)}, then);
+        auto running = Compare::jobs({plain("test", "running", 10, 100)}, then, false);
         QCOMPARE(running[0].verdict, QString());
-        running = Compare::jobs({plain("test", "running", 10, 260)}, then);
+        running = Compare::jobs({plain("test", "running", 10, 260)}, then, false);
         QCOMPARE(running[0].verdict, QString("slower"));
         QCOMPARE(Compare::notes(running), QStringList({"test 50s slower"}));
 
@@ -699,6 +709,13 @@ private slots:
         QCOMPARE(backend.branchFilter(), QString());
         // And from there, the one before that.
         QCOMPARE(backend.previous()["key"].toString(), QString("main1"));
+        // Shift+B goes back to where the walk began, however far it went.
+        backend.selectPrevious();
+        QCOMPARE(backend.selectedKey(), QString("main1"));
+        QCOMPARE(backend.cameFrom(), QString("Change pull3"));
+        backend.selectCameFrom();
+        QCOMPARE(backend.selectedKey(), QString("pull3"));
+        QCOMPARE(backend.cameFrom(), QString());
     }
 
     // --- The backend ---

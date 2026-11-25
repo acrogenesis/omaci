@@ -33,6 +33,7 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantMap estimate READ estimate NOTIFY estimateChanged)
     Q_PROPERTY(QVariantList history READ history NOTIFY historyChanged)
     Q_PROPERTY(QVariantMap previous READ previous NOTIFY previousChanged)
+    Q_PROPERTY(QString cameFrom READ cameFrom NOTIFY selectionChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QDateTime lastUpdated READ lastUpdated NOTIFY buildsChanged)
@@ -63,6 +64,7 @@ public:
     QVariantList history() const { return m_history; }
     // The build main had before the picked one, and how the two compare.
     QVariantMap previous() const { return m_previous; }
+    QString cameFrom() const { return buildByKey(m_cameFrom)["title"].toString(); }
     QString error() const { return m_error; }
     bool busy() const { return m_running > 0; }
     QDateTime lastUpdated() const { return m_lastUpdated; }
@@ -79,6 +81,8 @@ public:
     Q_INVOKABLE void selectJob(qlonglong id);
     Q_INVOKABLE void selectStep(int index);
     Q_INVOKABLE void selectPrevious();
+    // Back to the build `selectPrevious` was pressed on.
+    Q_INVOKABLE void selectCameFrom();
     Q_INVOKABLE void moveBuild(int delta);
     Q_INVOKABLE void moveJob(int delta);
     // The next step, counted from `from`, that has a place in the log; makes
@@ -201,6 +205,7 @@ private:
     QVariantMap m_previous;
     QString m_defaultBranch;
     QString m_defaultBranchOf;
+    QString m_cameFrom;
     QVariantList m_history;
     QString m_error;
     QDateTime m_lastUpdated;

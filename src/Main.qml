@@ -153,6 +153,7 @@ ApplicationWindow {
         else if (step === "step+") win.moveStep(1)
         else if (step === "end") { logView.follow = true; logView.toEnd(false) }
         else if (step === "previous") backend.selectPrevious()
+        else if (step === "back") backend.selectCameFrom()
     }
 
     Shortcut { sequence: "?"; onActivated: win.helpVisible = !win.helpVisible }
@@ -176,6 +177,7 @@ ApplicationWindow {
     Shortcut { sequences: ["O", "Return"]; onActivated: win.openOnGitHub() }
     Shortcut { sequence: "Z"; onActivated: win.tall = !win.tall }
     Shortcut { sequence: "B"; onActivated: backend.selectPrevious() }
+    Shortcut { sequence: "Shift+B"; onActivated: backend.selectCameFrom() }
     Shortcut { sequence: "F"; onActivated: backend.toggleBranch() }
     Shortcut { sequence: "S"; onActivated: backend.toggleSkipped() }
     Shortcut { sequence: "PgDown"; onActivated: win.scrollLogBy(1) }
@@ -516,6 +518,7 @@ ApplicationWindow {
                                 font.pixelSize: 12
                                 elide: Text.ElideRight
                             }
+                            Text { text: previousRow.was.sha || ""; color: theme.faint; font.pixelSize: 12; font.family: win.mono }
                             Text {
                                 textFormat: Text.PlainText
                                 color: theme.dim
@@ -543,8 +546,9 @@ ApplicationWindow {
                                     if (!was.key) return ""
                                     if (!was.ready) return "·  fetching its jobs…"
                                     const parts = notes.slice(0, 3)
+                                    // Two builds that ran to the end can be compared as a whole.
                                     if (was.notable && win.build.state === "success" && was.state === "success")
-                                        parts.unshift("this build " + Format.duration(Math.abs(was.delta)) + (was.delta > 0 ? " slower" : " faster"))
+                                        parts.unshift("this build " + (was.delta > 0 ? "+" : "−") + Format.duration(Math.abs(was.delta)) + (was.delta > 0 ? " slower" : " faster"))
                                     if (parts.length === 0 && backend.jobs.length > 0) return "·  no job stands out"
                                     return parts.length ? "·  " + parts.join(", ") : ""
                                 }
@@ -559,6 +563,14 @@ ApplicationWindow {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: backend.selectPrevious()
                         }
+                    }
+                    // The way back to where B was pressed.
+                    ActionButton {
+                        visible: backend.cameFrom !== ""
+                        Layout.maximumWidth: parent.width
+                        label: "Back to " + backend.cameFrom
+                        key: "Shift+B"
+                        onClicked: backend.selectCameFrom()
                     }
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: theme.line; visible: !win.tall }
@@ -1083,7 +1095,7 @@ ApplicationWindow {
                         ["Y", "Copy the failure and its link"],
                         ["Shift+C", "Copy the whole log"],
                         ["O / Enter", "Open the job on GitHub"],
-                        ["B", "The previous build on main"],
+                        ["B / Shift+B", "Previous build on main, and back"],
                         ["Z", "Tall log, and back"],
                         ["F", "Only this branch, and back"],
                         ["S", "Show or hide skipped builds"],

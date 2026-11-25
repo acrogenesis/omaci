@@ -24,14 +24,17 @@ struct Row {
     double thenStart = -1, thenEnd = -1;
     double delta = 0; // now - then, when both ran.
     // broke: failed now, didn't then. fixed: the other way round. slower,
-    // faster, same: both finished. new: no such job then. Empty: nothing to
+    // faster, same: both finished. new: no such job then. gone: it ran then
+    // and this build has no such job. Empty: nothing to
     // say yet (still running and not past the earlier time, or skipped).
     QString verdict;
 };
 
-// One row per job of this build, in the same order. A job's `end` is where it
-// is now when it is still running.
-QList<Row> jobs(const QList<Estimate::Job> &now, const QList<Estimate::Job> &then);
+// One row per job of this build, in the same order, and after them, when
+// `finished`, the jobs only the earlier build had: while a build runs, a
+// missing job may simply not have been created yet. A job's `end` is where
+// it is now when it is still running.
+QList<Row> jobs(const QList<Estimate::Job> &now, const QList<Estimate::Job> &then, bool finished = true);
 
 // "test broke", "build 58s slower": what is worth saying in one line, the
 // worst first. Empty when nothing stands out.

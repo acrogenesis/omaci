@@ -614,7 +614,7 @@ void Backend::computePrevious() {
                 then << entry;
             }
         }
-        const auto rows = ready ? Compare::jobs(now, then) : QList<Compare::Row>{};
+        const auto rows = ready ? Compare::jobs(now, then, !active) : QList<Compare::Row>{};
         QVariantMap perJob;
         double reach = 0;
         for (const auto &row : rows) {
@@ -650,6 +650,21 @@ void Backend::selectPrevious() {
         return;
     // It has to be in the list to be picked.
     if (!m_branch.isEmpty() && m_previous["branch"] != m_branch) {
+        m_branch.clear();
+        filterBuilds();
+    }
+    const auto from = m_cameFrom.isEmpty() ? m_key : m_cameFrom;
+    selectBuild(key);
+    // Walking further back keeps the way home to where the walk began.
+    m_cameFrom = from;
+    emit selectionChanged();
+}
+
+void Backend::selectCameFrom() {
+    const auto key = m_cameFrom;
+    if (key.isEmpty() || buildByKey(key).isEmpty())
+        return;
+    if (!m_branch.isEmpty() && buildByKey(key)["branch"] != m_branch) {
         m_branch.clear();
         filterBuilds();
     }
@@ -873,6 +888,7 @@ void Backend::applyLog(qlonglong jobId, const QByteArray &raw, bool final) {
 void Backend::selectBuild(const QString &key) {
     if (key == m_key || buildByKey(key).isEmpty())
         return;
+    m_cameFrom.clear();
     m_key = key;
     clearJob();
     rebuildJobs();

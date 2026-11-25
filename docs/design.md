@@ -81,9 +81,9 @@ A failed job opens with the first failure two lines below the top of the log, so
 
 "Is this slow, or is it always like this" and "did this break it, or was it already broken" are both questions about the build before. So every build is shown next to the one main had before it: the newest finished build on the default branch that started earlier. Whatever its result, because a main that was already red is exactly what you want to know before blaming a pull request. A pull request is compared with main too, not with its own previous push, since main is what it will be merged into.
 
-It shows in three places. A row under the bar names that build, how it ended, how long it took and how long ago, then says what changed in a few words, the worst first ("test broke, build 1m 9s slower"), and is itself the way there: click it or press `B`. On the timeline every job has a thin line under its bar where the same job ran last time, on the same axis, so slower and later are visible without reading a number. And a column on the right gives the job's time then, with an arrow up in yellow when it is slower now, an arrow down in green when faster, and "passed, 4m 20s" in red next to a job that fails now and did not then.
+It shows in three places. A row under the bar names that build, how it ended, how long it took and how long ago, then says what changed in a few words, the worst first ("test broke, build 1m 9s slower"), and is itself the way there: click it or press `B`. `B` again walks further back, and `Shift+B`, or the button that appears under the row, returns to the build the walk began on. On the timeline every job has a thin line under its bar where the same job ran last time, on the same axis, so slower and later are visible without reading a number. And a column on the right gives the job's time then, with an arrow up in yellow when it is slower now, an arrow down in green when faster, and "passed, 4m 20s" in red next to a job that fails now and did not then.
 
-The rules are in `src/compare.cpp`. A job broke when it fails now and did not before, and is fixed the other way round. Two times differ when they are more than five seconds and more than fifteen percent apart; less than that is the runner's mood and gets no colour. A job that is still running says nothing until it has outlasted its last time. The whole build is compared only when both passed.
+The rules are in `src/compare.cpp`. A job broke when it fails now and did not before, and is fixed the other way round. Two times differ when they are more than five seconds and more than fifteen percent apart; less than that is the runner's mood and gets no colour. A job that is still running says nothing until it has outlasted its last time. A job that only this build has is "new"; one that only the earlier build had is reported as not having run, but only once this build is done, because while it runs GitHub may simply not have created the job yet. The whole build is compared only when both passed.
 
 Which branch is "main" is asked from GitHub once per repository (`default_branch`); until the answer is in, `main` or `master` is taken. The jobs of the previous build are one request per run, once, and often already there because the forecast uses the same builds.
 
@@ -107,7 +107,7 @@ Every one of these is also something to click.
 | `Y` | copy the failure, with the link, for an agent |
 | `Shift+C` | copy the whole log |
 | `O` / `Enter` | open the job on GitHub |
-| `B` | the build main had before this one |
+| `B`, `Shift+B` | the build main had before this one, and back to where you were |
 | `Z` | give the whole height to the log, and back |
 | `F` | only the branch of this build, and back to all |
 | `S` | show or hide skipped builds |

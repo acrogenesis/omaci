@@ -35,7 +35,7 @@ static bool ran(const Estimate::Job &job) {
            job.state != "pending";
 }
 
-QList<Row> jobs(const QList<Estimate::Job> &now, const QList<Estimate::Job> &then) {
+QList<Row> jobs(const QList<Estimate::Job> &now, const QList<Estimate::Job> &then, bool finished) {
     QHash<QString, Estimate::Job> earlier;
     for (const auto &job : then)
         earlier.insert(job.key, job);
@@ -73,6 +73,21 @@ QList<Row> jobs(const QList<Estimate::Job> &now, const QList<Estimate::Job> &the
         else if (both && job.state == "success" && row.thenState == "success")
             row.verdict = !notable(row.now, row.then) ? "same" : row.delta > 0 ? "slower" : "faster";
         rows << row;
+        earlier.remove(job.key);
+    }
+    if (finished) {
+        for (const auto &was : then) {
+            if (!earlier.contains(was.key) || !ran(was))
+                continue;
+            Row row;
+            row.key = was.key;
+            row.thenState = was.state;
+            row.then = was.end - was.start;
+            row.thenStart = was.start;
+            row.thenEnd = was.end;
+            row.verdict = "gone";
+            rows << row;
+        }
     }
     return rows;
 }
@@ -95,6 +110,9 @@ QStringList notes(const QList<Row> &rows) {
     std::stable_sort(slower.begin(), slower.end(), [](const Row &a, const Row &b) { return a.delta > b.delta; });
     for (const auto &row : slower)
         out << QString("%1 %2 slower").arg(name(row), length(row.delta));
+    for (const auto &row : rows)
+        if (row.verdict == "gone")
+            out << name(row) + " didn't run";
     for (const auto &row : rows)
         if (row.verdict == "fixed")
             out << name(row) + " fixed";
