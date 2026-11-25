@@ -127,6 +127,15 @@ Every one of these is also something to click.
 
 Polling is every 6 seconds while a build is running and once a minute otherwise. A running build costs at most 600 counted requests an hour for its log, plus the jobs requests that actually changed (a few per step), against 5000. At most four `gh` processes run at a time.
 
+## The look
+
+The window reads like a terminal program in the family of btop and lazygit, because that is what the rest of an Omarchy desktop looks like. The layout and what is on it did not change for this; only how it is drawn.
+
+- **One font, one size.** The desktop's monospace font, which is what fontconfig's `monospace` resolves to and what Omarchy's font setting writes, at a size taken from the shell's `[font] base-size` (the user's `~/.config/omarchy/shell.toml` first, then the theme's, then 12). `Theme` measures one character of it and everything sits on that grid: widths in cells, rows a little over a line high. Text is hinted to whole pixels, as a terminal does it. The one exception is the headline, "About 3m 20s left", at one and a half times the size, because it is what the window is opened for.
+- **Frames.** Every panel (`builds`, `build`, `jobs`, `steps`, `log`) is a one pixel line with its title set into the top edge, a quieter note after it (`jobs ─ 3 running, 1 to come`) and a count in the far corner. The frame of the panel the keys last acted on is in the accent. Corners take Hyprland's `decoration:rounding`, asked when the app starts and when the theme changes: 0 on a stock Omarchy, so sharp. No fills, shadows or ripples; the Material style is gone and the few controls left (scroll bars) are drawn by the app.
+- **Bars are block characters, drawn as cells.** The progress bar is `███████░░░░▒▒┃▒▒`: full blocks for the time gone, light shade for what is left, medium shade for the band earlier builds ended in, a bar where one usually ends. The jobs are rows of blocks on a character-cell axis, shaded where still expected, with `╌` for the slow end and a `▁` line under each for where the job ran in the build before. They are drawn the way terminal emulators draw these characters, as the cells themselves rather than from the font, whose blocks are a hair narrower than a cell and would leave a seam between every two. The earlier builds are a real sparkline, `▅▆▅▆▃▅▆▁▆`.
+- **Marks and keys are text.** `✓ ✗ ○ ◌ – ⊘` and a braille spinner for running. Actions are `[c] copy link`, `[y] copy failure`, `[b] go to it`: the key in the accent, the whole thing clickable and lit in the accent under the pointer. Capitals are the shifted keys: `[B]`, `[C]`, `[E]`.
+
 ## What stays the same
 
 Nothing is written to disk. `gh` is the only way to GitHub. Log lines are plain text. The whole Omarchy palette is followed live now, not only the accent, so the window is light on a light theme. `--demo` shows invented builds for an invented repository, and the hidden `--screenshot <file>` draws the window offscreen into a PNG, which is how the screenshots in the README are made and how the layout was checked while building it.
@@ -145,4 +154,5 @@ Nothing is written to disk. `gh` is the only way to GitHub. Log lines are plain 
 - The run's log archive as a source of exact step boundaries.
 - Keeping the logs of finished jobs: going back to a job fetches its log again.
 - A new animated picture for the README. The pictures are stills from the offscreen renderer; `screenshots/social.png` still shows the old window.
-- Translations and Hyprland's corner rounding, which the Omarchy app template has and this app never did.
+- Translations, which the Omarchy app template has and this app never did.
+- Following a change of Hyprland's rounding or of the text size the moment it happens: both are read at start and again when the theme changes, not from Hyprland's event socket.

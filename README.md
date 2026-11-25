@@ -6,7 +6,7 @@ The builds of one repository, live, in a window of their own. How far the build 
 
 A bar widget can tell you that a build is red. It cannot tell you why, and finding out means a browser tab, three clicks into GitHub's Actions page, and a log viewer that loads a few thousand lines into a web page and scrolls them like one. This is the other half: open the build and the failing job is already selected, with the log on the test that failed rather than on the exit code that came after it, and one key copies the link to hand to somebody else.
 
-It is a native Qt Quick app, built and installed the way Omarchy's own apps are. New lines slide into the log and the view glides along with them, the running marks turn, and the colours follow your Omarchy theme as you switch it, the light ones too.
+It is a native Qt Quick app that looks like a terminal program, because that is what sits well on an Omarchy desktop: the desktop's monospace font at one size, panels as thin frames with their title in the top edge, bars made of blocks, and every action written as `[c] copy link`, which you can press or click. New lines slide into the log and the view glides along with them, the running marks spin, and the colours follow your Omarchy theme as you switch it, the light ones too.
 
 ## Install
 
@@ -48,9 +48,9 @@ Builds in which everything was skipped are hidden, because a repository with an 
 
 ## How long it will still take
 
-The largest text in the window is the answer: "About 3m 20s left". Under it is one bar. The filled part is the time gone, the tick is where a build like this usually ends, and the band around the tick is how far apart the earlier ones ended, so you see what the estimate is worth along with the estimate. Next to it are those earlier builds, one small bar each, as tall as the build was long and coloured by how it ended. Point at one for its name and its time, click it to go there.
+The largest text in the window is the answer: "About 3m 20s left". Under it is one bar. The filled part is the time gone, the tick is where a build like this usually ends, and the band around the tick is how far apart the earlier ones ended, so you see what the estimate is worth along with the estimate. Next to it are those earlier builds as a sparkline, one character each, as tall as the build was long and coloured by how it ended. Point at one for its name and its time, click it to go there.
 
-The estimate comes from builds that passed, on the same branch when there are at least three of those, otherwise from builds started the same way, so a pull request is compared with other pull requests, which do not deploy. From the last six of them the app takes the jobs: how long each one usually runs, and which jobs had always finished before it began. Then it plays this build forward. A running job ends at its start plus its usual length, a job that has not started begins when the ones it waits for are done, and the build ends when the last job does. That is how the timeline can show a `deploy` that GitHub has not created yet, drawn hollow where it will be.
+The estimate comes from builds that passed, on the same branch when there are at least three of those, otherwise from builds started the same way, so a pull request is compared with other pull requests, which do not deploy. From the last six of them the app takes the jobs: how long each one usually runs, and which jobs had always finished before it began. Then it plays this build forward. A running job ends at its start plus its usual length, a job that has not started begins when the ones it waits for are done, and the build ends when the last job does. That is how the timeline can show a `deploy` that GitHub has not created yet, drawn shaded where it will be.
 
 It is done three times, with every job quick, usual and slow, and the quick and slow answers are the band on the bar. The number is rounded to what it can be trusted to and always says "about". With fewer than three earlier builds there is no guess: the bar becomes a moving stripe and the text says how long the build has been going. A build that has outlasted its estimate says "Taking longer than usual", in yellow, with how far over it is, rather than sitting at zero.
 
@@ -68,19 +68,19 @@ It is main also when you look at a pull request, because main is what the pull r
 
 ## The jobs, in time
 
-Every job is a row on the same time axis. Solid is what happened, hollow is what is still expected, the thin line with a cap is how much longer it takes when the job is slow, and the vertical line is now. One look says which job the build is waiting for. On the right is how long the job has run and how long it usually does. Jobs that were skipped share one line at the bottom.
+Every job is a row on the same time axis. Solid blocks are what happened, shaded ones are what is still expected, the dashes after them are how much longer it takes when the job is slow, and the vertical line is now. One look says which job the build is waiting for. On the right is how long the job has run and how long it usually does. Jobs that were skipped share one line at the bottom.
 
 Pick a build and the job worth looking at is already selected: the one that failed, otherwise the one that is running, otherwise the last one that did any work. While a build is going, the selection moves along to whichever job is running now, until you pick one yourself.
 
 | | |
 |---|---|
-| Turning ring | running |
-| Open circle | queued |
-| Dotted circle | expected, going by earlier builds, but not created yet |
-| Green check | passed |
-| Red cross | failed, timed out, or never started |
-| Grey dash | cancelled, which is what GitHub does to a run a newer push replaced |
-| Struck circle | skipped |
+| `⠹` spinning | running |
+| `○` | queued |
+| `◌` | expected, going by earlier builds, but not created yet |
+| `✓` green | passed |
+| `✗` red | failed, timed out, or never started |
+| `–` | cancelled, which is what GitHub does to a run a newer push replaced |
+| `⊘` | skipped |
 
 ## When a build fails
 
@@ -149,7 +149,7 @@ The comparison needs the jobs of the previous build on main, a request or two, o
 
 <img src="screenshots/light.png" width="800" alt="The same running build on a light theme, with a blue accent">
 
-The whole palette, live: background, text, accent, and the theme's own green, red and yellow for passed, failed and late. Without Omarchy it is dark with a yellow accent.
+The whole palette, live: background, text, accent, and the theme's own green, red and yellow for passed, failed and late. The font is the desktop's monospace font (whatever `fc-match monospace` says, which is what Omarchy's font setting changes), sized from the shell's `base-size`, and the frames have the corners Hyprland gives your windows: sharp by default, round if you rounded them. The panel the keys last acted on has its frame in the accent. Without Omarchy it is dark with a yellow accent.
 
 ## Privacy
 

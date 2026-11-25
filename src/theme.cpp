@@ -5,6 +5,12 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontDatabase>
+#include <QFontMetrics>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QRegularExpression>
 #include <cmath>
 
@@ -23,13 +29,58 @@ static double luminance(const QColor &c) {
 Theme::Theme(const QString &directory, QObject *parent)
     : QObject(parent),
       m_directory(directory.isEmpty() ? QDir::homePath() + "/.local/state/omarchy/current" : directory),
-      m_colors(defaults()) {
+      m_colors(defaults()),
+      m_desktop(directory.isEmpty()) {
     m_debounce.setSingleShot(true);
     m_debounce.setInterval(80);
     connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { m_debounce.start(); });
     connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this] { m_debounce.start(); });
     connect(&m_debounce, &QTimer::timeout, this, &Theme::reload);
     reload();
+}
+
+int Theme::readBaseSize(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return 0;
+    bool inFont = false;
+    static const QRegularExpression size("^base-size\\s*=\\s*(\\d+)");
+    for (const auto &raw : QString::fromUtf8(file.readAll()).split('\n')) {
+        const auto line = raw.trimmed();
+        if (line.startsWith('['))
+            inFont = line == "[font]";
+        const auto match = size.match(line);
+        if (inFont && match.hasMatch())
+            return match.captured(1).toInt();
+    }
+    return 0;
+}
+
+// Hyprland is asked when the app starts and whenever the theme changes,
+// which is when its rounding does. Without Hyprland the corners stay sharp.
+void Theme::askRounding() {
+    const auto hyprctl = QStandardPaths::findExecutable("hyprctl");
+    if (!m_desktop || hyprctl.isEmpty())
+        return;
+    auto *process = new QProcess(this);
+    connect(process, &QProcess::finished, this, [this, process] {
+        const auto answer = QJsonDocument::fromJson(process->readAllStandardOutput()).object();
+        process->deleteLater();
+        const int radius = answer.contains("int") ? qBound(0, answer.value("int").toInt(), 24) : m_radius;
+        if (radius != m_radius) {
+            m_radius = radius;
+            emit changed();
+        }
+    });
+    connect(process, &QProcess::errorOccurred, process, &QObject::deleteLater);
+    process->start(hyprctl, {"getoption", "decoration:rounding", "-j"});
+}
+
+void Theme::setRadius(int radius) {
+    if (radius == m_radius)
+        return;
+    m_radius = radius;
+    emit changed();
 }
 
 QVariantMap Theme::readColors(const QString &path) {
@@ -92,8 +143,29 @@ void Theme::reload() {
         colors["foreground"] = luminance(QColor(read["background"].toString())) > .4 ? "#1a1a1a" : "#e6e6e6";
     for (auto it = read.cbegin(); it != read.cend(); ++it)
         colors.insert(it.key(), it.value());
-    if (colors != m_colors) {
+    // The monospace font fontconfig hands out is the one Omarchy's font
+    // setting writes, and the shell's base size (12 unless changed) is what
+    // "text size" on the desktop moves. The user's own shell.toml wins over
+    // the theme's.
+    const auto font = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    int base = m_desktop ? readBaseSize(QDir::homePath() + "/.config/omarchy/shell.toml") : 0;
+    if (!base)
+        base = readBaseSize(m_directory + "/theme/shell.toml");
+    if (!base)
+        base = 12;
+    const int textSize = qBound(9, int(std::lround(base * 13.0 / 12.0)), 40);
+
+    if (colors != m_colors || font != m_font || textSize != m_textSize) {
         m_colors = colors;
+        m_font = font.isEmpty() ? QString("monospace") : font;
+        m_textSize = textSize;
+        QFont cell(m_font);
+        cell.setPixelSize(m_textSize);
+        cell.setHintingPreference(QFont::PreferFullHinting);
+        const QFontMetrics metrics(cell);
+        m_cellWidth = qMax(1, metrics.horizontalAdvance(QChar('M')));
+        m_cellHeight = qMax(1, metrics.height());
         emit changed();
     }
+    askRounding();
 }

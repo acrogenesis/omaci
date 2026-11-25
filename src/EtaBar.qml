@@ -1,9 +1,9 @@
 import QtQuick
 
-// One bar for "how far is it". The filled part is the time gone and the whole
-// width is the slow end of what earlier builds did. A tick marks the usual
-// finish, and the band around it how far the earlier builds spread, so the
-// bar shows what the estimate is worth as well as what it is.
+// "How far is it" in characters. Full blocks are the time gone, the light
+// shade is what is left up to the slow end of what earlier builds did, the
+// medium shade is the band they ended in, and the bar is where one usually
+// ends: ████████████░░░░░░░░▒▒▒┃▒▒
 Item {
     id: bar
     property real elapsed: 0
@@ -15,60 +15,49 @@ Item {
 
     readonly property bool known: typical > 0
     readonly property real span: Math.max(elapsed, high, typical, 1)
-    implicitHeight: 14
+    readonly property int cells: Math.max(4, Math.floor(width / theme.cellWidth))
+    implicitHeight: theme.cellHeight
 
-    function at(seconds) { return Math.max(0, Math.min(1, seconds / span)) * track.width }
+    function cell(seconds) { return Math.max(0, Math.min(cells, seconds / span * cells)) }
 
-    Rectangle {
-        id: track
-        anchors.verticalCenter: parent.verticalCenter
-        width: parent.width
-        height: 8
-        radius: 4
-        color: theme.raised
-        clip: true
+    readonly property bool banded: known && high > low
+    readonly property int bandFrom: Math.floor(cell(low))
+    readonly property int bandTo: Math.max(bandFrom + 1, Math.ceil(cell(high)))
 
-        Rectangle {
-            height: parent.height
-            radius: parent.radius
-            color: bar.fill
-            width: bar.known || !bar.active ? Math.max(height, bar.at(bar.elapsed)) : 0
-            Behavior on width { enabled: bar.active; NumberAnimation { duration: 1000 } }
-        }
-
-        // No estimate: a stripe that travels, which says "working" without
-        // claiming to know how far.
-        Rectangle {
-            visible: bar.active && !bar.known
-            width: parent.width * 0.22
-            height: parent.height
-            radius: parent.radius
-            color: bar.fill
-            opacity: 0.8
-            SequentialAnimation on x {
-                running: bar.active && !bar.known && bar.visible
-                loops: Animation.Infinite
-                NumberAnimation { from: -track.width * 0.22; to: track.width; duration: 1600; easing.type: Easing.InOutSine }
-            }
+    // What is left, and in it the band the earlier builds ended in.
+    Blocks { cells: bar.cells; color: theme.dim; shade: 0.28 }
+    Blocks { visible: bar.banded; from: bar.bandFrom; cells: bar.bandTo - bar.bandFrom; color: theme.dim; shade: 0.45 }
+    // What is gone, to an eighth of a character.
+    Blocks {
+        visible: bar.known || !bar.active
+        cells: Math.floor(bar.cell(bar.elapsed) * 8) / 8
+        color: bar.fill
+    }
+    // No estimate: a few blocks that travel, which says "working" without
+    // claiming to know how far.
+    Mono {
+        id: traveller
+        property real at: 0
+        visible: bar.active && !bar.known
+        x: Math.floor(at) * theme.cellWidth
+        color: bar.fill
+        text: "▓▓▓▓▓▓"
+        opacity: 0
+        Blocks { cells: 6; color: bar.fill; shade: 0.8; parent: traveller.parent; x: traveller.x }
+        NumberAnimation on at {
+            running: traveller.visible
+            loops: Animation.Infinite
+            from: 0
+            to: Math.max(1, bar.cells - 6)
+            duration: 2400
         }
     }
-
-    Rectangle {
-        visible: bar.known && bar.high > bar.low
-        x: bar.at(bar.low)
-        width: Math.max(2, bar.at(bar.high) - bar.at(bar.low))
-        anchors.verticalCenter: parent.verticalCenter
-        height: 14
-        radius: 3
-        color: Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.13)
-        border.width: 1
-        border.color: Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.22)
-    }
-    Rectangle {
+    // Where a build like this usually ends.
+    Mono {
         visible: bar.known
-        x: Math.min(parent.width - width, bar.at(bar.typical) - 1)
-        width: 2
-        height: parent.height
+        x: Math.min(bar.cells - 1, Math.floor(bar.cell(bar.typical))) * theme.cellWidth
         color: theme.text
+        font.bold: true
+        text: "┃"
     }
 }

@@ -123,6 +123,9 @@ int main(int argc, char *argv[]) {
     QCommandLineOption themeOption("theme", "A directory to read the theme from instead of Omarchy's.", "directory");
     themeOption.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(themeOption);
+    QCommandLineOption radiusOption("radius", "Corner rounding for the screenshot, as Hyprland would give it.", "pixels");
+    radiusOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(radiusOption);
     parser.process(app);
     const bool demo = parser.isSet(demoOption);
     const bool shot = parser.isSet(screenshotOption);
@@ -132,11 +135,15 @@ int main(int argc, char *argv[]) {
     if (!demo && !shot && handOver(repo, sha))
         return 0;
 
-    QQuickStyle::setStyle("Material");
+    // The window draws its own frames, bars and buttons; the controls it
+    // does use (scroll bars) come without a style of their own.
+    QQuickStyle::setStyle("Basic");
 
     // A screenshot shows the app's own colours unless it is given a theme,
     // so the README's pictures don't depend on whose desktop drew them.
     Theme theme(parser.isSet(themeOption) ? parser.value(themeOption) : shot ? QString("/nonexistent/ciwatch") : QString());
+    if (parser.isSet(radiusOption))
+        theme.setRadius(parser.value(radiusOption).toInt());
     Backend backend(repo, demo);
 
     QQmlApplicationEngine engine;

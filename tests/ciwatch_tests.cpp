@@ -1048,7 +1048,7 @@ private slots:
 
     void theWindowLoadsShowsTheDemoAndAnswersItsKeys()
     {
-        QQuickStyle::setStyle("Material");
+        QQuickStyle::setStyle("Basic");
         QTemporaryDir dir;
         Theme theme(dir.path());
         Backend backend("acme/storefront", true);

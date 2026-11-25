@@ -1,70 +1,72 @@
 import QtQuick
 import "format.js" as Format
 
-// The jobs of a build on one time axis. Solid is what happened, hollow is
-// what earlier builds say is still to come, and the line is now: one look
-// says which job the build is waiting for.
+// The jobs of a build on one time axis, in characters. Full blocks are what
+// happened, shade is what earlier builds say is still to come, the dashes
+// after it are how much longer a slow run takes, the low line under a bar is
+// where the same job ran in the build main had before, and the line down
+// through the rows is now.
 Item {
     id: timeline
     property var jobs: []
     property var estimate: ({})
     // The build main had before this one: where its jobs ran, and how long.
     property var previous: ({})
-    readonly property bool compared: previous.ready === true
     property real selectedJobId: 0
     signal picked(real id)
 
+    readonly property real cw: theme.cellWidth
+    readonly property real ch: theme.cellHeight
+    readonly property bool compared: previous.ready === true
     // Skipped jobs did nothing and have no log, so they share one line at
     // the bottom instead of taking a row each; unless they are all there is.
     readonly property var skipped: jobs.filter(job => job.state === "skipped")
     readonly property var shown: skipped.length === jobs.length ? jobs : jobs.filter(job => job.state !== "skipped")
     readonly property bool skippedLine: skipped.length > 0 && skipped.length < jobs.length
 
-    readonly property int rowHeight: 26
-    readonly property int labelWidth: Math.max(150, Math.min(250, width * 0.2))
-    readonly property int figuresWidth: compared ? 250 : 150
-    readonly property int wasWidth: 100
-    readonly property real trackWidth: Math.max(50, width - labelWidth - figuresWidth - 16)
+    readonly property int rowHeight: Math.round(ch * 1.45)
+    readonly property int labelCells: Math.max(16, Math.min(30, Math.floor(width / cw * 0.2)))
+    readonly property int figureCells: 17
+    readonly property int wasCells: compared ? 16 : 0
+    readonly property int cells: Math.max(8, Math.floor(width / cw) - labelCells - figureCells - wasCells - 2)
+    readonly property real labelWidth: labelCells * cw
     readonly property real axis: Math.max(1, estimate.axis || 1) * 1.04
     readonly property bool active: estimate.active === true
     readonly property real elapsed: estimate.elapsed || 0
-    readonly property int tickStep: Format.tickStep(axis, Math.max(3, Math.floor(trackWidth / 70)))
+    readonly property int tickStep: Format.tickStep(axis, Math.max(3, Math.floor(cells / 9)))
 
-    implicitHeight: 22 + rows.implicitHeight + (skippedLine ? 22 : 0)
+    implicitHeight: ch + 4 + rows.implicitHeight + (skippedLine ? rowHeight : 0)
 
-    function px(seconds) { return Math.max(0, Math.min(1, seconds / axis)) * trackWidth }
+    function cell(seconds) { return Math.max(0, Math.min(cells, Math.round(seconds / axis * cells))) }
+    function run(from, to, glyph, least) {
+        const a = cell(from), b = Math.max(a + least, cell(to))
+        return " ".repeat(a) + glyph.repeat(Math.max(0, Math.min(cells, b) - a))
+    }
 
     // The axis, and its marks down through the rows.
     Repeater {
         model: Math.floor(timeline.axis / timeline.tickStep) + 1
         delegate: Item {
             required property int index
-            x: timeline.labelWidth + timeline.px(index * timeline.tickStep)
-            height: timeline.height
-            Rectangle { y: 20; width: 1; height: rows.implicitHeight + 2; color: theme.line; opacity: 0.6 }
-            Text {
+            x: timeline.labelWidth + timeline.cell(index * timeline.tickStep) * timeline.cw
+            Rectangle { y: timeline.ch + 2; width: 1; height: rows.implicitHeight + 2; color: theme.line }
+            Mono {
                 x: index === 0 ? 0 : -width / 2
-                y: 2
                 text: Format.tick(index * timeline.tickStep)
                 color: theme.faint
-                font.pixelSize: 11
             }
         }
     }
-
-    Text {
+    Mono {
         visible: timeline.compared
         anchors.right: parent.right
-        anchors.rightMargin: 16
-        y: 2
-        text: "before, on " + (timeline.previous.branch || "main")
+        text: "before, " + (timeline.previous.branch || "main")
         color: theme.faint
-        font.pixelSize: 11
     }
 
     Column {
         id: rows
-        y: 22
+        y: timeline.ch + 4
         width: parent.width
 
         Repeater {
@@ -83,109 +85,89 @@ Item {
                 readonly property real until: running ? timeline.elapsed : modelData.end
                 readonly property bool forecastShown: timeline.active && forecast.end > 0 && forecast.typical >= 0
                                                       && (running || waiting)
+                readonly property real barY: Math.round((height - timeline.ch) / 2) - 1
 
                 width: rows.width
                 height: timeline.rowHeight
+                radius: Math.min(4, theme.radius)
                 color: current ? theme.raised : area.containsMouse && modelData.id > 0 ? theme.hover : "transparent"
 
-                Rectangle { width: 3; height: parent.height; color: theme.accent; visible: row.current }
+                Rectangle { width: Math.max(2, Math.round(timeline.cw / 3)); height: parent.height; color: theme.accent; visible: row.current }
 
-                StatusIcon { x: 16; anchors.verticalCenter: parent.verticalCenter; state: row.jobState; size: 13 }
+                StatusIcon { x: timeline.cw; y: row.barY; state: row.jobState }
                 Row {
-                    x: 38
-                    width: timeline.labelWidth - 46
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 8
+                    x: timeline.cw * 3
+                    y: row.barY
+                    width: timeline.labelWidth - timeline.cw * 4
                     clip: true
-                    Text {
+                    Mono {
                         id: nameText
                         width: Math.min(implicitWidth, parent.width)
                         text: modelData.name
-                        textFormat: Text.PlainText
                         color: row.jobState === "skipped" || row.jobState === "pending" ? theme.dim : theme.text
-                        font.pixelSize: 13
                         font.bold: row.current
                         elide: Text.ElideRight
                     }
                     // Which workflow, when the build has more than one.
-                    Text {
-                        visible: modelData.workflow !== "" && width > 20
-                        width: Math.max(0, parent.width - nameText.width - 8)
-                        anchors.baseline: nameText.baseline
-                        text: modelData.workflow || ""
-                        textFormat: Text.PlainText
+                    Mono {
+                        visible: modelData.workflow !== "" && width > timeline.cw * 3
+                        width: Math.max(0, parent.width - nameText.width)
+                        text: " " + (modelData.workflow || "")
                         color: theme.faint
-                        font.pixelSize: 11
                         elide: Text.ElideRight
                     }
                 }
 
                 Item {
                     x: timeline.labelWidth
-                    width: timeline.trackWidth
-                    height: parent.height
+                    y: row.barY
+                    width: timeline.cells * timeline.cw
+                    height: timeline.ch
 
+                    // Where the same job ran in the build before: a low
+                    // line that shows under and beside the bar.
+                    Blocks {
+                        visible: timeline.compared && row.was.thenEnd > 0
+                        eighth: true
+                        y: timeline.ch + 2
+                        from: timeline.cell(row.was.thenStart)
+                        cells: Math.max(1, timeline.cell(row.was.thenEnd) - from)
+                        color: row.was.thenState === "failure" ? theme.bad : theme.dim
+                    }
                     // What is still expected: from now, or from where the job
                     // usually starts, to where it usually ends.
-                    Rectangle {
+                    Blocks {
                         visible: row.forecastShown
-                        readonly property real begin: row.running ? timeline.elapsed : Math.max(row.from, 0)
-                        x: timeline.px(begin)
-                        width: Math.max(0, timeline.px(row.forecast.end) - x)
-                        anchors.verticalCenter: parent.verticalCenter
-                        height: 10
-                        radius: 3
-                        color: Qt.rgba(theme.accent.r, theme.accent.g, theme.accent.b, row.waiting ? 0.10 : 0.16)
-                        border.width: 1
-                        border.color: Qt.rgba(theme.accent.r, theme.accent.g, theme.accent.b, row.waiting ? 0.45 : 0.7)
+                        from: timeline.cell(row.running ? timeline.elapsed : Math.max(row.from, 0))
+                        cells: Math.max(0, timeline.cell(row.forecast.end) - from)
+                        color: theme.accent
+                        shade: row.waiting ? 0.25 : 0.4
                     }
                     // How much later it ends when the job is slow.
-                    Rectangle {
+                    Mono {
                         visible: row.forecastShown && row.forecast.high > row.forecast.end
-                        x: timeline.px(row.forecast.end)
-                        width: Math.max(0, timeline.px(row.forecast.high) - x)
-                        anchors.verticalCenter: parent.verticalCenter
-                        height: 1
-                        color: Qt.rgba(theme.accent.r, theme.accent.g, theme.accent.b, 0.6)
-                        Rectangle { anchors.right: parent.right; y: -3; width: 1; height: 7; color: parent.color; visible: parent.width > 2 }
-                    }
-                    // Where the same job ran in the build before: a thin
-                    // line under the bar, on the same axis.
-                    Rectangle {
-                        visible: timeline.compared && row.was.thenEnd > 0
-                        x: timeline.px(row.was.thenStart)
-                        width: Math.max(2, timeline.px(row.was.thenEnd) - x)
-                        y: parent.height / 2 + 7
-                        height: 2
-                        radius: 1
-                        color: row.was.thenState === "failure" ? theme.bad : theme.dim
-                        opacity: 0.8
+                        text: visible ? timeline.run(row.forecast.end, row.forecast.high, "╌", 0) : ""
+                        color: theme.accent
+                        opacity: 0.7
                     }
                     // What happened.
-                    Rectangle {
+                    Blocks {
                         visible: row.started
-                        x: timeline.px(modelData.start)
-                        width: Math.max(3, timeline.px(row.until) - x)
-                        anchors.verticalCenter: parent.verticalCenter
-                        height: 10
-                        radius: 3
+                        from: timeline.cell(modelData.start)
+                        cells: Math.max(1, timeline.cell(row.until) - from)
                         color: row.running ? theme.accent
                              : row.jobState === "success" ? theme.ok
                              : row.jobState === "failure" ? theme.bad : theme.faint
-                        opacity: row.jobState === "success" ? 0.8 : 1
                     }
                 }
 
                 // How long the job took in the build before, and whether
                 // that is a difference worth a colour.
-                Text {
+                Mono {
                     visible: timeline.compared
                     anchors.right: parent.right
-                    anchors.rightMargin: 16
-                    anchors.verticalCenter: parent.verticalCenter
-                    textFormat: Text.PlainText
-                    font.pixelSize: 12
-                    font.family: "monospace"
+                    anchors.rightMargin: timeline.cw
+                    y: row.barY
                     color: row.was.verdict === "broke" ? theme.bad
                          : row.was.verdict === "slower" ? theme.warn
                          : row.was.verdict === "faster" || row.was.verdict === "fixed" ? theme.ok : theme.faint
@@ -199,13 +181,10 @@ Item {
                         return arrow + Format.duration(row.was.then)
                     }
                 }
-                Text {
+                Mono {
                     anchors.right: parent.right
-                    anchors.rightMargin: 16 + (timeline.compared ? timeline.wasWidth + 20 : 0)
-                    anchors.verticalCenter: parent.verticalCenter
-                    textFormat: Text.PlainText
-                    font.pixelSize: 12
-                    font.family: "monospace"
+                    anchors.rightMargin: timeline.cw * (1 + timeline.wasCells)
+                    y: row.barY
                     color: row.running ? (row.forecast.late ? theme.warn : theme.accent) : theme.dim
                     text: {
                         const usual = row.forecast.typical >= 0 && timeline.active ? " / ~" + Format.duration(row.forecast.typical) : ""
@@ -228,37 +207,31 @@ Item {
         }
     }
 
-    Text {
+    Mono {
         visible: timeline.skippedLine
-        x: 38
-        y: 22 + rows.implicitHeight
-        width: parent.width - 54
-        height: 22
-        verticalAlignment: Text.AlignVCenter
-        text: "Skipped: " + timeline.skipped.map(job => job.name).join(", ")
-        textFormat: Text.PlainText
+        x: timeline.cw
+        y: rows.y + rows.implicitHeight + Math.round((timeline.rowHeight - timeline.ch) / 2)
+        width: parent.width - timeline.cw * 2
+        text: "⊘ skipped: " + timeline.skipped.map(job => job.name).join(", ")
         color: theme.faint
-        font.pixelSize: 12
         elide: Text.ElideRight
     }
 
     // Now.
     Rectangle {
         visible: timeline.active
-        x: timeline.labelWidth + timeline.px(timeline.elapsed)
-        y: 16
+        x: timeline.labelWidth + Math.min(1, timeline.elapsed / timeline.axis) * timeline.cells * timeline.cw
+        y: timeline.ch
         width: 1
-        height: 6 + rows.implicitHeight
+        height: rows.implicitHeight + 6
         color: theme.text
-        Behavior on x { NumberAnimation { duration: 1000 } }
         Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
-            y: -14
-            width: nowText.implicitWidth + 10
-            height: 16
-            radius: 3
+            y: -timeline.ch
+            width: nowText.implicitWidth + timeline.cw
+            height: timeline.ch
             color: theme.text
-            Text { id: nowText; anchors.centerIn: parent; text: "now"; color: theme.background; font.pixelSize: 10; font.bold: true }
+            Mono { id: nowText; anchors.centerIn: parent; text: "now"; color: theme.background; font.bold: true }
         }
     }
 }
