@@ -5,6 +5,7 @@
         <file alias="Blocks.qml">Blocks.qml</file>
         <file alias="Panel.qml">Panel.qml</file>
         <file alias="Keycap.qml">Keycap.qml</file>
+        <file alias="Toggle.qml">Toggle.qml</file>
         <file alias="Scroll.qml">Scroll.qml</file>
         <file alias="StatusIcon.qml">StatusIcon.qml</file>
         <file alias="EtaBar.qml">EtaBar.qml</file>

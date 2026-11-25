@@ -750,6 +750,47 @@ private slots:
         QCOMPARE(backend.builds().size(), 3);
     }
 
+    void backendShowsOnlyMainAndBack()
+    {
+        Backend backend("owner/repo");
+        backend.setOffline(true);
+        backend.applyRuns({run(1, "success", "aaaa", 300, 60, "Tests & Deploy", "feature"), run(2, "running", "bbbb", 200),
+                           run(3, "success", "cccc", 100), run(4, "success", "dddd", 50, 60, "Nightly", "main", "schedule")});
+        backend.selectBuild("aaaa");
+        QCOMPARE(backend.builds().size(), 4);
+        backend.toggleMain();
+        QVERIFY(backend.mainOnly());
+        // Main's builds only: not the branch, and not a scheduled job on main.
+        QCOMPARE(backend.builds().size(), 2);
+        QCOMPARE(backend.selectedKey(), QString("bbbb"));
+        backend.toggleMain();
+        QVERIFY(!backend.mainOnly());
+        QCOMPARE(backend.builds().size(), 4);
+    }
+
+    void backendShowsOnlyRunningBuildsAndKeepsTheOneYouWatch()
+    {
+        Backend backend("owner/repo");
+        backend.setOffline(true);
+        const QVariantList before{run(1, "running", "aaaa", 300), run(2, "success", "bbbb", 200), run(3, "queued", "cccc", 100)};
+        backend.applyRuns(before);
+        backend.selectBuild("bbbb");
+        backend.toggleRunning();
+        QVERIFY(backend.runningOnly());
+        QCOMPARE(backend.builds().size(), 2);
+        QCOMPARE(backend.selectedKey(), QString("aaaa"));
+        // The watched build finishes and stays; once another is picked it goes.
+        const QVariantList after{run(1, "success", "aaaa", 300), run(2, "success", "bbbb", 200), run(3, "queued", "cccc", 100)};
+        backend.applyRuns(after);
+        QCOMPARE(backend.builds().size(), 2);
+        QCOMPARE(backend.selectedKey(), QString("aaaa"));
+        backend.selectBuild("cccc");
+        backend.applyRuns(after);
+        QCOMPARE(backend.builds().size(), 1);
+        backend.toggleRunning();
+        QCOMPARE(backend.builds().size(), 3);
+    }
+
     void backendShowsTheJobsOfEveryRunOfTheBuild()
     {
         Backend backend("owner/repo");

@@ -44,7 +44,7 @@ A commit, not a workflow run, the same as in the widget. One push starts several
 
 Runs started by something else, a schedule or a comment on an issue, attach to the head of the branch as well. Counting those in would stretch a four minute build to half a day because a nightly job ran on the same commit, so each of them is an entry of its own.
 
-Builds in which everything was skipped are hidden, because a repository with an issue bot has more of those than builds. `S` shows them. `F` narrows the list to the branch of the build you are on, and back.
+Builds in which everything was skipped are hidden, because a repository with an issue bot has more of those than builds. `S` shows them. The bar at the top has the filters, each with a box that is filled while it is on: `M` keeps only the builds of main (or whatever the default branch is called), `F` only the branch of the build you are on, `A` only the builds that are running or waiting for a runner, and `S` shows the skipped ones too. Click a filter or press its key to flip it. With `A` on, the build you are looking at stays in the list when it finishes, so it doesn't disappear at the moment it has news; the next one you pick replaces it.
 
 ## How long it will still take
 
@@ -130,7 +130,9 @@ Every one of these is also something you can click.
 | `O` / `Enter` | open the job on GitHub |
 | `B` / `Shift+B` | the build main had before this one, and back |
 | `Z` | tall log, and back |
+| `M` | only the builds of main, and back |
 | `F` | only the branch of this build, and back |
+| `A` | only the builds that are running, and back |
 | `S` | show or hide skipped builds |
 | `PgUp` / `PgDn` | scroll the log |
 | `Home` / `End` | top of the log / back to following the end |

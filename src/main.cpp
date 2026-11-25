@@ -75,6 +75,10 @@ static void screenshot(QQuickWindow *window, Backend *backend, const QStringList
             backend->toggleSkipped();
         else if (step == "branch")
             backend->toggleBranch();
+        else if (step == "main")
+            backend->toggleMain();
+        else if (step == "running")
+            backend->toggleRunning();
         else if (step != "wait")
             QMetaObject::invokeMethod(window, "scene", Q_ARG(QVariant, step));
     });

@@ -40,6 +40,8 @@ class Backend : public QObject {
     Q_PROPERTY(QString branchFilter READ branchFilter NOTIFY buildsChanged)
     // The repository's default branch, so the window can set its builds apart.
     Q_PROPERTY(QString mainBranch READ baseBranch NOTIFY buildsChanged)
+    Q_PROPERTY(bool mainOnly READ mainOnly NOTIFY buildsChanged)
+    Q_PROPERTY(bool runningOnly READ runningOnly NOTIFY buildsChanged)
     Q_PROPERTY(bool showSkipped READ showSkipped NOTIFY buildsChanged)
     Q_PROPERTY(int activeCount READ activeCount NOTIFY buildsChanged)
 
@@ -71,6 +73,8 @@ public:
     bool busy() const { return m_running > 0; }
     QDateTime lastUpdated() const { return m_lastUpdated; }
     QString branchFilter() const { return m_branch; }
+    bool mainOnly() const { return !m_branch.isEmpty() && m_branch == baseBranch(); }
+    bool runningOnly() const { return m_runningOnly; }
     bool showSkipped() const { return m_showSkipped; }
     int activeCount() const;
 
@@ -91,6 +95,10 @@ public:
     // it the picked step and returns its index, or -1 when there is none.
     Q_INVOKABLE int moveStep(int from, int delta);
     Q_INVOKABLE void toggleBranch();
+    // Only the builds of the default branch, and back to all.
+    Q_INVOKABLE void toggleMain();
+    // Only the builds that are running or waiting for a runner, and back.
+    Q_INVOKABLE void toggleRunning();
     Q_INVOKABLE void toggleSkipped();
 
     // The address of the picked job, or of its run when no job is picked.
@@ -213,6 +221,7 @@ private:
     QDateTime m_lastUpdated;
     QString m_branch;
     bool m_showSkipped = false;
+    bool m_runningOnly = false;
     QTimer m_poll;
     QTimer m_tick;
 };

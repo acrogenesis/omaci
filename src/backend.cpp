@@ -278,11 +278,20 @@ void Backend::rebuild() {
 
 void Backend::filterBuilds() {
     m_builds.clear();
+    // Narrowed to main, the list is main's builds: a scheduled job that
+    // happens to run on main is not one of them.
+    const bool mainOnly = this->mainOnly();
     for (const auto &value : m_allBuilds) {
         const auto build = value.toMap();
         if (!m_showSkipped && build["state"] == "skipped")
             continue;
         if (!m_branch.isEmpty() && build["branch"] != m_branch)
+            continue;
+        if (mainOnly && !build["isBuild"].toBool())
+            continue;
+        // The build you are watching stays when it finishes, so it doesn't
+        // vanish from under you at the moment it has news.
+        if (m_runningOnly && !GitHub::isActive(build["state"].toString()) && build["key"] != m_key)
             continue;
         m_builds << build;
     }
@@ -983,6 +992,21 @@ void Backend::show(const QString &repo, const QString &sha) {
 
 void Backend::toggleBranch() {
     m_branch = m_branch.isEmpty() ? selectedBuild()["branch"].toString() : QString();
+    filterBuilds();
+    fetchJobs();
+}
+
+void Backend::toggleMain() {
+    m_branch = mainOnly() ? QString() : baseBranch();
+    filterBuilds();
+    fetchJobs();
+}
+
+void Backend::toggleRunning() {
+    m_runningOnly = !m_runningOnly;
+    // Turned on, it shows what is running, not the finished build you were on.
+    if (m_runningOnly && !GitHub::isActive(selectedBuild()["state"].toString()))
+        m_key.clear();
     filterBuilds();
     fetchJobs();
 }

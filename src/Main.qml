@@ -231,6 +231,8 @@ ApplicationWindow {
     Shortcut { sequence: "Shift+B"; onActivated: { win.focusPanel = "builds"; backend.selectCameFrom() } }
     Shortcut { sequence: "F"; onActivated: backend.toggleBranch() }
     Shortcut { sequence: "S"; onActivated: backend.toggleSkipped() }
+    Shortcut { sequence: "M"; onActivated: { win.focusPanel = "builds"; backend.toggleMain() } }
+    Shortcut { sequence: "A"; onActivated: { win.focusPanel = "builds"; backend.toggleRunning() } }
     Shortcut { sequence: "PgDown"; onActivated: win.scrollLogBy(1) }
     Shortcut { sequence: "PgUp"; onActivated: win.scrollLogBy(-1) }
     Shortcut { sequence: "Home"; onActivated: { win.focusPanel = "log"; logView.follow = false; backend.selectStep(-1); logView.positionViewAtBeginning() } }
@@ -254,21 +256,34 @@ ApplicationWindow {
 
                 Mono { text: "ciwatch"; color: theme.accent; font.bold: true }
                 Mono { text: backend.repo; font.bold: true }
-                Keycap {
+                // The filters, each a box that is filled while it is on, so
+                // what the list leaves out is never a guess.
+                Mono { text: "filter"; color: theme.faint }
+                Toggle {
+                    key: "m"
+                    label: backend.mainBranch || "main"
+                    checked: backend.mainOnly
+                    onClicked: { win.focusPanel = "builds"; backend.toggleMain() }
+                }
+                Toggle {
                     key: "f"
-                    label: backend.branchFilter ? "only " + backend.branchFilter : "all branches"
+                    label: backend.branchFilter && !backend.mainOnly ? backend.branchFilter : "this branch"
+                    checked: backend.branchFilter !== "" && !backend.mainOnly
                     active: backend.branchFilter !== "" || win.build.branch !== undefined
-                    onClicked: backend.toggleBranch()
+                    onClicked: { win.focusPanel = "builds"; backend.toggleBranch() }
                 }
-                Keycap {
+                Toggle {
+                    key: "a"
+                    label: backend.activeCount > 0 ? backend.activeCount + " running" : "running"
+                    checked: backend.runningOnly
+                    labelColor: checked ? theme.text : backend.activeCount > 0 ? theme.accent : theme.dim
+                    onClicked: { win.focusPanel = "builds"; backend.toggleRunning() }
+                }
+                Toggle {
                     key: "s"
-                    label: backend.showSkipped ? "with skipped" : "skipped hidden"
-                    onClicked: backend.toggleSkipped()
-                }
-                Row {
-                    visible: backend.activeCount > 0
-                    StatusIcon { state: "running" }
-                    Mono { text: " " + backend.activeCount + " running"; color: theme.accent }
+                    label: "skipped"
+                    checked: backend.showSkipped
+                    onClicked: { win.focusPanel = "builds"; backend.toggleSkipped() }
                 }
                 Item { Layout.fillWidth: true }
                 StatusIcon { state: "running"; opacity: backend.busy ? 1 : 0 }
@@ -311,7 +326,7 @@ ApplicationWindow {
                 Layout.preferredWidth: Math.round(Math.max(34, Math.min(42, win.width / win.cw * 0.23)) * win.cw)
                 Layout.fillHeight: true
                 title: "builds"
-                note: backend.branchFilter
+                note: [backend.branchFilter ? "only " + backend.branchFilter : "", backend.runningOnly ? "running" : ""].filter(part => part).join(" · ")
                 corner: backend.builds.length ? (backend.selectedIndex + 1) + "/" + backend.builds.length : ""
                 focused: win.focusPanel === "builds"
 
@@ -438,7 +453,7 @@ ApplicationWindow {
                     Mono {
                         anchors.centerIn: parent
                         visible: buildList.count === 0 && !isNaN(backend.lastUpdated.getTime())
-                        text: "no builds match this filter"
+                        text: backend.runningOnly && backend.activeCount === 0 ? "nothing is running right now" : "no builds match this filter"
                         color: theme.dim
                     }
                 }
@@ -1109,7 +1124,7 @@ ApplicationWindow {
                     columnSpacing: win.cw * 3
                     rowSpacing: Math.round(win.ch / 3)
                     flow: Grid.TopToBottom
-                    rows: 10
+                    rows: 11
                     Repeater {
                         model: [
                             ["j / ↓", "next build"], ["k / ↑", "previous build"],
@@ -1122,7 +1137,9 @@ ApplicationWindow {
                             ["o / enter", "open the job on github"],
                             ["b / B", "before on main, and back"],
                             ["z", "tall log, and back"],
+                            ["m", "only main, and back"],
                             ["f", "only this branch, and back"],
+                            ["a", "only running builds, and back"],
                             ["s", "show or hide skipped builds"],
                             ["pgup / pgdn", "scroll the log"],
                             ["home / end", "top of the log, follow the end"],
