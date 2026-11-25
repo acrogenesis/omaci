@@ -109,6 +109,7 @@ Every one of these is also something to click.
 | `O` / `Enter` | open the job on GitHub |
 | `B`, `Shift+B` | the build main had before this one, and back to where you were |
 | `Z` | give the whole height to the log, and back |
+| `W` | wrap long log lines onto the next line, and back; on at the start |
 | `M` | only the builds of main, and back to all |
 | `F` | only the branch of this build, and back to all |
 | `A` | only the builds that are running, and back to all |

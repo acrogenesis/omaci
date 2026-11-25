@@ -31,6 +31,9 @@ ApplicationWindow {
     property bool helpVisible: false
     // The log alone, for reading: the build and its timeline step aside.
     property bool tall: false
+    // Long log lines wrap onto the next line instead of running off to the
+    // right; W turns it off for logs that read better as one line each.
+    property bool wrap: true
     // The panel the keys last acted on, which gets the accent on its frame.
     property string focusPanel: "builds"
     property real now: Date.now()
@@ -192,6 +195,22 @@ ApplicationWindow {
         const url = backend.openUrl()
         if (url) Qt.openUrlExternally(url)
     }
+    // Wrapping changes how tall every line is, so the line at the top is
+    // put back at the top afterwards, or the end if the log was following.
+    function toggleWrap() {
+        win.focusPanel = "log"
+        const top = logView.indexAt(20, logView.contentY + 2)
+        win.wrap = !win.wrap
+        if (logView.follow) {
+            Qt.callLater(logView.toEnd, false)
+        } else if (top >= 0) {
+            Qt.callLater(() => {
+                logView.scripted = true
+                logView.positionViewAtIndex(top, ListView.Beginning)
+                logView.scripted = false
+            })
+        }
+    }
     function moveBuild(delta) { win.focusPanel = "builds"; backend.moveBuild(delta) }
     function moveJob(delta) { win.focusPanel = "jobs"; backend.moveJob(delta) }
     // For screenshots: main.cpp walks the window through a scene.
@@ -227,6 +246,7 @@ ApplicationWindow {
     Shortcut { sequence: "Shift+C"; onActivated: { backend.copyLog(); toast.show("copied the whole log") } }
     Shortcut { sequences: ["O", "Return"]; onActivated: win.openOnGitHub() }
     Shortcut { sequence: "Z"; onActivated: win.tall = !win.tall }
+    Shortcut { sequence: "W"; onActivated: win.toggleWrap() }
     Shortcut { sequence: "B"; onActivated: { win.focusPanel = "builds"; backend.selectPrevious() } }
     Shortcut { sequence: "Shift+B"; onActivated: { win.focusPanel = "builds"; backend.selectCameFrom() } }
     Shortcut { sequence: "F"; onActivated: backend.toggleBranch() }
@@ -800,6 +820,7 @@ ApplicationWindow {
                                     onClicked: win.jumpToFailure(win.failureIndex + 1)
                                 }
                                 Keycap { key: "o"; label: "open on github"; onClicked: win.openOnGitHub() }
+                                Toggle { key: "w"; label: "wrap"; checked: win.wrap; onClicked: win.toggleWrap() }
                                 Keycap { key: "z"; label: win.tall ? "show build" : "tall log"; onClicked: win.tall = !win.tall }
                                 Keycap {
                                     visible: !logView.follow && win.job.state === "running"
@@ -954,7 +975,7 @@ ApplicationWindow {
                                     ScrollBar.vertical: Scroll { id: logBar }
                                     ScrollBar.horizontal: Scroll { quiet: true }
                                     flickableDirection: Flickable.AutoFlickIfNeeded
-                                    contentWidth: Math.max(width, win.cw * 300)
+                                    contentWidth: win.wrap ? width : Math.max(width, win.cw * 300)
 
                                     readonly property bool nearEnd: contentY + height >= originY + contentHeight - 24
                                     onContentYChanged: if (!scripted && (moving || logBar.pressed)) follow = nearEnd
@@ -970,7 +991,7 @@ ApplicationWindow {
                                         required property int mark
                                         readonly property int headingHeight: step !== "" ? Math.round(logView.lineHeight * 1.5) : 0
                                         width: logView.contentWidth
-                                        height: logView.lineHeight + headingHeight
+                                        height: lineRow.height + headingHeight
 
                                         // Where a step begins: a rule with its name
                                         // in it, so the log reads as chapters.
@@ -1000,9 +1021,11 @@ ApplicationWindow {
                                             }
                                         }
                                         Rectangle {
+                                            id: lineRow
                                             y: logLine.headingHeight
                                             width: parent.width
-                                            height: logView.lineHeight
+                                            height: win.wrap ? Math.max(logView.lineHeight, lineText.implicitHeight + logView.lineHeight - win.ch)
+                                                             : logView.lineHeight
                                             color: logLine.index === logView.highlighted ? theme.accentSoft
                                                  : logLine.mark === 2 ? Qt.rgba(theme.bad.r, theme.bad.g, theme.bad.b, 0.22)
                                                  : logLine.mark === 1 ? Qt.rgba(theme.bad.r, theme.bad.g, theme.bad.b, 0.09)
@@ -1010,13 +1033,16 @@ ApplicationWindow {
                                             Rectangle { width: Math.max(2, Math.round(win.cw / 3)); height: parent.height; color: theme.bad; visible: logLine.mark > 0 }
                                             Mono {
                                                 x: win.cw
-                                                anchors.verticalCenter: parent.verticalCenter
+                                                y: Math.round((logView.lineHeight - win.ch) / 2)
                                                 text: logLine.time
                                                 color: theme.faint
                                             }
                                             Mono {
+                                                id: lineText
                                                 x: logView.timeWidth
-                                                anchors.verticalCenter: parent.verticalCenter
+                                                y: Math.round((logView.lineHeight - win.ch) / 2)
+                                                width: win.wrap ? logView.width - x - win.cw : undefined
+                                                wrapMode: win.wrap ? Text.WrapAtWordBoundaryOrAnywhere : Text.NoWrap
                                                 text: (logLine.kind === 1 ? "▸ " : logLine.kind === 2 ? "error: " : logLine.kind === 3 ? "warning: " : "") + logLine.text
                                                 color: logLine.mark === 2 ? theme.bad
                                                      : [theme.text, theme.accent, theme.bad, theme.warn, theme.info, theme.info][logLine.kind]
@@ -1124,7 +1150,7 @@ ApplicationWindow {
                     columnSpacing: win.cw * 3
                     rowSpacing: Math.round(win.ch / 3)
                     flow: Grid.TopToBottom
-                    rows: 11
+                    rows: 12
                     Repeater {
                         model: [
                             ["j / ↓", "next build"], ["k / ↑", "previous build"],
@@ -1137,6 +1163,7 @@ ApplicationWindow {
                             ["o / enter", "open the job on github"],
                             ["b / B", "before on main, and back"],
                             ["z", "tall log, and back"],
+                            ["w", "wrap long log lines, and back"],
                             ["m", "only main, and back"],
                             ["f", "only this branch, and back"],
                             ["a", "only running builds, and back"],

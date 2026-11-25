@@ -1180,6 +1180,12 @@ private slots:
         const auto before = backend.selectedJobId();
         QTest::keyClick(window, Qt::Key_L);
         QVERIFY(backend.selectedJobId() != before);
+        // W turns wrapping of long log lines off and on again.
+        QVERIFY(window->property("wrap").toBool());
+        QTest::keyClick(window, Qt::Key_W);
+        QVERIFY(!window->property("wrap").toBool());
+        QTest::keyClick(window, Qt::Key_W);
+        QVERIFY(window->property("wrap").toBool());
         QTest::keyClick(window, Qt::Key_Z);
         QVERIFY(window->property("tall").toBool());
         QTest::keyClick(window, '?');
