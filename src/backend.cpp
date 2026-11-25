@@ -188,6 +188,7 @@ void Backend::fetchDefaultBranch() {
         if (!ok || repo != m_repo)
             return;
         m_defaultBranch = QJsonDocument::fromJson(out).object().value("default_branch").toString();
+        emit buildsChanged();
         rebuildJobs();
         fetchJobs();
     });

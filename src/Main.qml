@@ -335,7 +335,14 @@ ApplicationWindow {
                         // The picked build has the better forecast; the others
                         // go by how long builds like them usually take.
                         readonly property real total: current && win.estimate.known ? win.estimate.total : (modelData.usual || 0)
-                        readonly property int barCells: Math.max(4, Math.floor(width / win.cw) - 5)
+                        // Main is the trunk the list hangs from, the way git
+                        // draws a graph: its builds sit on the line, the
+                        // builds of every other branch hang off it, set in.
+                        readonly property bool onMain: modelData.isBuild && modelData.branch === backend.mainBranch
+                        readonly property real trunkX: Math.round(win.cw * 1.5)
+                        readonly property real rule: Math.max(1, Math.round(win.cw / 6))
+                        readonly property real textX: win.cw * (onMain ? 3 : 5)
+                        readonly property int barCells: Math.max(4, Math.floor((width - textX) / win.cw) - 2)
                         width: ListView.view.width
                         height: Math.round(win.ch * (active ? 3 : 2) + 10)
                         radius: Math.min(4, theme.radius)
@@ -343,24 +350,60 @@ ApplicationWindow {
 
                         Rectangle { width: Math.max(2, Math.round(win.cw / 3)); height: parent.height; color: theme.accent; visible: buildRow.current }
 
-                        StatusIcon { x: win.cw; y: 5; state: modelData.failing ? "failure" : modelData.state }
+                        // The trunk runs through every row; a main build's
+                        // mark interrupts it, another branch's joins it.
+                        Rectangle {
+                            x: buildRow.trunkX
+                            width: buildRow.rule
+                            height: buildRow.onMain ? 4 : parent.height
+                            color: theme.faint
+                        }
+                        Rectangle {
+                            visible: buildRow.onMain
+                            x: buildRow.trunkX
+                            y: 6 + win.ch
+                            width: buildRow.rule
+                            height: parent.height - y
+                            color: theme.faint
+                        }
+                        Rectangle {
+                            visible: !buildRow.onMain
+                            x: buildRow.trunkX
+                            y: Math.round(5 + win.ch / 2)
+                            width: win.cw * 3 - buildRow.trunkX - 2
+                            height: buildRow.rule
+                            color: theme.faint
+                        }
+
+                        StatusIcon { x: buildRow.textX - win.cw * 2; y: 5; state: modelData.failing ? "failure" : modelData.state }
                         Mono {
-                            x: win.cw * 3
+                            x: buildRow.textX
                             y: 5
                             width: parent.width - x - agoText.width - win.cw * 2
                             text: modelData.title
+                            color: buildRow.onMain || buildRow.current ? theme.text : theme.dim
                             font.bold: buildRow.current
                             elide: Text.ElideRight
                         }
                         Mono { id: agoText; anchors.right: parent.right; anchors.rightMargin: win.cw; y: 5; text: win.ago(modelData.startedAt); color: theme.dim }
+                        // The branch in its own colour, so main and the rest
+                        // tell apart without reading.
                         Mono {
-                            x: win.cw * 3
+                            id: branchText
+                            x: buildRow.textX
                             y: 5 + win.ch
-                            width: parent.width - x - timeText.width - win.cw * 2
-                            text: modelData.isBuild ? modelData.branch + " · " + modelData.sha
-                                                    : modelData.workflows.join(", ") + " · " + modelData.event
-                            color: theme.dim
+                            width: Math.min(implicitWidth, parent.width - x - shaText.implicitWidth - timeText.width - win.cw * 2)
+                            text: modelData.isBuild ? modelData.branch : modelData.workflows.join(", ")
+                            color: buildRow.onMain ? theme.accent : modelData.isBuild ? theme.info : theme.dim
+                            font.bold: buildRow.onMain
                             elide: Text.ElideMiddle
+                        }
+                        Mono {
+                            id: shaText
+                            x: branchText.x + branchText.width
+                            y: 5 + win.ch
+                            text: " · " + (modelData.isBuild ? modelData.sha : modelData.event)
+                            color: theme.dim
                         }
                         Mono {
                             id: timeText
@@ -375,7 +418,7 @@ ApplicationWindow {
                         // How far a running build is, on the row itself.
                         Item {
                             visible: buildRow.active
-                            x: win.cw * 3
+                            x: buildRow.textX
                             y: 5 + win.ch * 2
                             Blocks { cells: buildRow.barCells; color: theme.dim; shade: 0.28 }
                             Blocks {
@@ -413,7 +456,9 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     visible: !win.tall
                     title: "build"
-                    note: win.build.key ? [win.build.branch, win.build.sha].filter(part => part).join(" · ") : ""
+                    note: !win.build.key ? ""
+                        : win.build.branch === backend.mainBranch ? [win.build.branch, win.build.sha].join(" · ")
+                        : [win.build.branch, "not on " + backend.mainBranch, win.build.sha].filter(part => part).join(" · ")
                     corner: win.build.failing ? "failing" : (win.build.state || "")
                     cornerColor: win.build.failing ? theme.bad : win.stateColor(win.build.state)
                     contentHeight: buildColumn.implicitHeight

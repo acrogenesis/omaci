@@ -90,6 +90,8 @@ The runner's own error line, "Process completed with exit code 1.", is the last 
 
 A failed job opens with the first failure at the top of the log, and a panel above the log names each one with its file and line. Click one to go there. `E` and `Shift+E` walk through them. The lines of a failure have a red edge, so they are easy to find again while scrolling.
 
+The list is drawn the way `git log --graph` draws history: the builds of the default branch sit on a line down the left, with the branch name in the accent colour, and the builds of every other branch (pull requests, Dependabot, a scheduled run) hang off that line, set in, with a dimmer title and their branch name in a colour of its own. The heading of a build that is not on main says so.
+
 Every step is a way into the log. Click one, or press `N` and `P`, and the log shows where that step ends, at the bottom of the view, because that is where its outcome is: the summary of a test run, or the error a command stopped on. A step that is still running is followed as it writes. The log has a heading at each of those places, and while you scroll, the step you are reading is the one marked in the list. Steps that were skipped wrote nothing and cannot be clicked.
 
 ## Handing it to somebody else

@@ -1071,6 +1071,9 @@ private slots:
         // the earlier ones, and its log follows.
         QTRY_VERIFY(backend.builds().size() > 10);
         QCOMPARE(backend.selectedBuild()["state"].toString(), QString("running"));
+        // The list sets main apart from the other branches, so it has to
+        // know which branch main is.
+        QCOMPARE(backend.property("mainBranch").toString(), QString("main"));
         QTRY_COMPARE(backend.estimate()["basis"].toString(), QString("jobs"));
         QTRY_VERIFY(backend.log()->rowCount() > 20);
         QVERIFY(window->property("headline").toString().startsWith("About "));

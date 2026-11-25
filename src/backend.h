@@ -38,6 +38,8 @@ class Backend : public QObject {
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QDateTime lastUpdated READ lastUpdated NOTIFY buildsChanged)
     Q_PROPERTY(QString branchFilter READ branchFilter NOTIFY buildsChanged)
+    // The repository's default branch, so the window can set its builds apart.
+    Q_PROPERTY(QString mainBranch READ baseBranch NOTIFY buildsChanged)
     Q_PROPERTY(bool showSkipped READ showSkipped NOTIFY buildsChanged)
     Q_PROPERTY(int activeCount READ activeCount NOTIFY buildsChanged)
 
