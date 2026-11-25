@@ -1083,7 +1083,7 @@ ApplicationWindow {
                         ["Y", "Copy the failure and its link"],
                         ["Shift+C", "Copy the whole log"],
                         ["O / Enter", "Open the job on GitHub"],
-                        ["B", "The build main had before this one"],
+                        ["B", "The previous build on main"],
                         ["Z", "Tall log, and back"],
                         ["F", "Only this branch, and back"],
                         ["S", "Show or hide skipped builds"],
