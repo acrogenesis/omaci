@@ -2,5 +2,10 @@
     <qresource prefix="/">
         <file alias="Main.qml">Main.qml</file>
         <file alias="StatusIcon.qml">StatusIcon.qml</file>
+        <file alias="EtaBar.qml">EtaBar.qml</file>
+        <file alias="HistoryStrip.qml">HistoryStrip.qml</file>
+        <file alias="ActionButton.qml">ActionButton.qml</file>
+        <file alias="JobsTimeline.qml">JobsTimeline.qml</file>
+        <file alias="format.js">format.js</file>
     </qresource>
 </RCC>

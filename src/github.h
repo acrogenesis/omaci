@@ -15,6 +15,9 @@ struct LogLine {
     QString time;
     QString text;
     int kind = Plain;
+    // Milliseconds since the epoch, or 0 for a line without a timestamp. The
+    // log's own clock is finer than the one the jobs API gives a step.
+    qint64 ms = 0;
 };
 
 // One word for a run, job, or step: running, queued, success, failure,
@@ -22,12 +25,32 @@ struct LogLine {
 QString state(const QString &status, const QString &conclusion);
 bool isActive(const QString &state);
 
+// Milliseconds since the epoch for an API timestamp, or 0 when it is empty.
+qint64 ms(const QString &iso);
+// Whole seconds between two API timestamps, never negative.
+int secondsBetween(const QString &from, const QString &to);
+
 QVariantList parseRuns(const QByteArray &json, QString *error = nullptr);
 QVariantList parseJobs(const QByteArray &json, QString *error = nullptr);
 QList<LogLine> parseLog(const QByteArray &raw);
 
-// Runs that were running or queued before and have finished now, so the app
-// can tell the user without them watching the window.
-QVariantList finishedRuns(const QVariantList &before, const QVariantList &after);
+// A build is a commit: every run a push, pull request or dispatch started for
+// it, rolled up. It is running while any of them is, red when any failed, and
+// lasts from the first run starting to the last one ending. Runs started by
+// anything else (a schedule, a comment) attach to the head of the branch too,
+// so each of those stays an entry of its own rather than stretching a build.
+QVariantList builds(const QVariantList &runs);
+
+// Builds that were going before and are done now, so the app can tell the
+// user without them watching the window.
+QVariantList finishedBuilds(const QVariantList &before, const QVariantList &after);
+
+// The line each step starts on in its job's log, in step order, or -1 for a
+// step that wrote nothing (a skipped one) or whose start can't be found.
+QList<int> mapSteps(const QVariantList &steps, const QList<LogLine> &lines);
+
+// What to paste to somebody (or to a coding agent) to point at this job: the
+// job's page, or the run's when no job is picked.
+QString shareUrl(const QString &repo, const QVariantMap &job, const QVariantMap &run);
 
 }

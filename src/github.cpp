@@ -6,6 +6,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <algorithm>
+#include <limits>
 
 namespace GitHub {
 
@@ -29,6 +31,20 @@ QString state(const QString &status, const QString &conclusion) {
 
 bool isActive(const QString &state) {
     return state == "running" || state == "queued";
+}
+
+qint64 ms(const QString &iso) {
+    if (iso.isEmpty())
+        return 0;
+    const auto when = QDateTime::fromString(iso, Qt::ISODateWithMs);
+    return when.isValid() ? when.toMSecsSinceEpoch() : 0;
+}
+
+int secondsBetween(const QString &from, const QString &to) {
+    const auto a = ms(from), b = ms(to);
+    if (!a || !b)
+        return 0;
+    return int(qMax<qint64>(0, (b - a + 500) / 1000));
 }
 
 static QJsonArray arrayIn(const QByteArray &json, const char *key, QString *error) {
@@ -88,7 +104,9 @@ QVariantList parseJobs(const QByteArray &json, QString *error) {
         }
         jobs << QVariantMap{
             {"id", job["id"].toVariant().toLongLong()},
+            {"runId", job["run_id"].toVariant().toLongLong()},
             {"name", job["name"].toString()},
+            {"workflow", job["workflow_name"].toString()},
             {"state", state(job["status"].toString(), job["conclusion"].toString())},
             {"url", job["html_url"].toString()},
             {"startedAt", job["started_at"].toString()},
@@ -122,8 +140,10 @@ QList<LogLine> parseLog(const QByteArray &raw) {
         const auto match = stamp.match(rest);
         if (match.hasMatch()) {
             const auto when = QDateTime::fromString(match.captured(1), Qt::ISODateWithMs);
-            if (when.isValid())
+            if (when.isValid()) {
                 line.time = when.toLocalTime().toString("HH:mm:ss");
+                line.ms = when.toMSecsSinceEpoch();
+            }
             rest = rest.mid(match.capturedLength());
         }
         if (rest.startsWith("##[endgroup]"))
@@ -144,20 +164,232 @@ QList<LogLine> parseLog(const QByteArray &raw) {
     return lines;
 }
 
-QVariantList finishedRuns(const QVariantList &before, const QVariantList &after) {
-    QHash<qlonglong, QString> previous;
-    for (const auto &run : before)
-        previous.insert(run.toMap()["id"].toLongLong(), run.toMap()["state"].toString());
+static bool isBuildEvent(const QString &event) {
+    static const QStringList events{"push", "pull_request", "pull_request_target", "workflow_dispatch",
+                                    "merge_group"};
+    return events.contains(event);
+}
+
+// The state of several runs taken together. Skipped runs say nothing unless
+// every run was skipped.
+static QString rollUp(const QVariantList &runs, bool *failing) {
+    int running = 0, queued = 0, failed = 0, cancelled = 0, done = 0, counted = 0;
+    for (const auto &value : runs) {
+        const auto state = value.toMap()["state"].toString();
+        if (state == "skipped")
+            continue;
+        ++counted;
+        running += state == "running";
+        queued += state == "queued";
+        failed += state == "failure";
+        cancelled += state == "cancelled";
+        done += !isActive(state);
+    }
+    *failing = failed > 0;
+    if (!counted)
+        return "skipped";
+    if (running || (queued && done))
+        return "running";
+    if (queued)
+        return "queued";
+    if (failed)
+        return "failure";
+    if (cancelled)
+        return "cancelled";
+    return "success";
+}
+
+QVariantList builds(const QVariantList &runs) {
+    QStringList order;
+    QHash<QString, QVariantList> grouped;
+    for (const auto &value : runs) {
+        const auto run = value.toMap();
+        const auto key = isBuildEvent(run["event"].toString()) && !run["fullSha"].toString().isEmpty()
+                             ? run["fullSha"].toString()
+                             : QString("run:%1").arg(run["id"].toLongLong());
+        if (!grouped.contains(key))
+            order << key;
+        grouped[key] << run;
+    }
+
+    QVariantList out;
+    for (const auto &key : order) {
+        auto members = grouped[key];
+        // Oldest first, so the jobs of a build read in the order they started.
+        std::stable_sort(members.begin(), members.end(), [](const QVariant &a, const QVariant &b) {
+            return ms(a.toMap()["startedAt"].toString()) < ms(b.toMap()["startedAt"].toString());
+        });
+        bool failing = false;
+        const auto state = rollUp(members, &failing);
+
+        QVariantMap lead;
+        QString started, ended;
+        QStringList workflows;
+        QVariantList ids;
+        for (const auto &value : members) {
+            const auto run = value.toMap();
+            ids << run["id"];
+            const bool skipped = run["state"] == "skipped" && state != "skipped";
+            if (skipped)
+                continue;
+            if (!workflows.contains(run["workflow"].toString()))
+                workflows << run["workflow"].toString();
+            // The run to open and to name the build after: the one that
+            // failed, else the one still going, else the first.
+            const auto runState = run["state"].toString();
+            if (lead.isEmpty() || (runState == "failure" && lead["state"] != "failure") ||
+                (isActive(runState) && !isActive(lead["state"].toString()) && lead["state"] != "failure"))
+                lead = run;
+            const auto from = run["startedAt"].toString(), to = run["updatedAt"].toString();
+            if (started.isEmpty() || ms(from) < ms(started))
+                started = from;
+            if (ended.isEmpty() || ms(to) > ms(ended))
+                ended = to;
+        }
+        const bool active = isActive(state);
+        const auto first = members.first().toMap();
+        out << QVariantMap{
+            {"key", key},
+            {"isBuild", !key.startsWith("run:")},
+            {"sha", first["sha"]},
+            {"fullSha", first["fullSha"]},
+            {"title", lead["title"]},
+            {"branch", lead["branch"]},
+            {"event", lead["event"]},
+            {"actor", lead["actor"]},
+            {"url", lead["url"]},
+            {"state", state},
+            {"failing", failing && active},
+            {"startedAt", started},
+            {"endedAt", active ? QString() : ended},
+            {"seconds", active ? 0 : secondsBetween(started, ended)},
+            {"workflows", workflows},
+            {"runIds", ids},
+            {"runs", members},
+        };
+    }
+    return out;
+}
+
+QVariantList finishedBuilds(const QVariantList &before, const QVariantList &after) {
+    QHash<QString, QString> previous;
+    for (const auto &build : before)
+        previous.insert(build.toMap()["key"].toString(), build.toMap()["state"].toString());
 
     QVariantList finished;
     for (const auto &value : after) {
-        const auto run = value.toMap();
-        const auto id = run["id"].toLongLong();
-        const auto now = run["state"].toString();
-        if (previous.contains(id) && isActive(previous[id]) && !isActive(now) && now != "skipped")
-            finished << run;
+        const auto build = value.toMap();
+        const auto key = build["key"].toString();
+        const auto now = build["state"].toString();
+        if (previous.contains(key) && isActive(previous[key]) && !isActive(now) && now != "skipped")
+            finished << build;
     }
     return finished;
+}
+
+namespace {
+
+enum StepKind { SetUp, Containers, StopContainers, Pre, Post, Complete, User };
+
+StepKind stepKind(const QString &name, bool first) {
+    if (first || name == "Set up job")
+        return SetUp;
+    if (name == "Initialize containers")
+        return Containers;
+    if (name == "Stop containers")
+        return StopContainers;
+    if (name == "Complete job")
+        return Complete;
+    if (name.startsWith("Post "))
+        return Post;
+    if (name.startsWith("Pre "))
+        return Pre;
+    return User;
+}
+
+bool marks(const LogLine &line, StepKind kind) {
+    switch (kind) {
+    case User: return line.kind == Group && line.text.startsWith("Run ");
+    case Post: return line.text == "Post job cleanup.";
+    case Containers: return line.kind == Group && line.text == "Checking docker version";
+    case StopContainers:
+        return line.text.startsWith("Print service container logs") ||
+               line.text.startsWith("Stop and remove container");
+    case Complete:
+        return line.text == "Cleaning up orphan processes" || line.text == "Evaluate and set job outputs";
+    // A pre step writes no line of its own that says it starts.
+    case Pre:
+    case SetUp: return false;
+    }
+    return false;
+}
+
+}
+
+QList<int> mapSteps(const QVariantList &steps, const QList<LogLine> &lines) {
+    QList<int> starts(steps.size(), -1);
+    // The API gives a step's times in whole seconds, cut off rather than
+    // rounded, so a step that "ended at :08" may have written until :08.999.
+    static constexpr qint64 Second = 1000;
+    int cursor = 0;
+    for (int i = 0; i < steps.size() && cursor < lines.size(); ++i) {
+        const auto step = steps[i].toMap();
+        const auto state = step["state"].toString();
+        if (state == "skipped" || state == "queued")
+            continue;
+        const auto kind = stepKind(step["name"].toString(), i == 0);
+        if (kind == SetUp) {
+            starts[i] = 0;
+            cursor = 1;
+            continue;
+        }
+        const qint64 from = ms(step["startedAt"].toString());
+        const qint64 until = ms(step["completedAt"].toString());
+        if (!from)
+            continue;
+        const qint64 earliest = from;
+        const qint64 latest = until ? until + Second : std::numeric_limits<qint64>::max();
+
+        int found = -1, fallback = -1;
+        for (int at = cursor; at < lines.size(); ++at) {
+            const auto &line = lines.at(at);
+            if (!line.ms)
+                continue;
+            if (line.ms >= latest)
+                break;
+            if (line.ms < earliest)
+                continue;
+            if (fallback < 0 && line.ms >= from)
+                fallback = at;
+            if (marks(line, kind)) {
+                found = at;
+                break;
+            }
+        }
+        if (found < 0)
+            found = fallback;
+        if (found < 0)
+            continue;
+        starts[i] = found;
+        cursor = found + 1;
+    }
+    return starts;
+}
+
+QString shareUrl(const QString &repo, const QVariantMap &job, const QVariantMap &run) {
+    const auto jobUrl = job["url"].toString();
+    if (!jobUrl.isEmpty())
+        return jobUrl;
+    const auto runId = job["runId"].toLongLong() ? job["runId"].toLongLong() : run["id"].toLongLong();
+    const auto jobId = job["id"].toLongLong();
+    if (runId && jobId > 0)
+        return QString("https://github.com/%1/actions/runs/%2/job/%3").arg(repo).arg(runId).arg(jobId);
+    const auto runUrl = run["url"].toString();
+    if (!runUrl.isEmpty())
+        return runUrl;
+    if (runId)
+        return QString("https://github.com/%1/actions/runs/%2").arg(repo).arg(runId);
+    return {};
 }
 
 }

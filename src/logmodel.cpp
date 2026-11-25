@@ -12,12 +12,14 @@ QVariant LogModel::data(const QModelIndex &index, int role) const {
     case TimeRole: return line.time;
     case TextRole: return line.text;
     case KindRole: return line.kind;
+    case StepRole: return m_headings.value(index.row());
+    case MarkRole: return m_marks.value(index.row(), NoMark);
     }
     return {};
 }
 
 QHash<int, QByteArray> LogModel::roleNames() const {
-    return {{TimeRole, "time"}, {TextRole, "text"}, {KindRole, "kind"}};
+    return {{TimeRole, "time"}, {TextRole, "text"}, {KindRole, "kind"}, {StepRole, "step"}, {MarkRole, "mark"}};
 }
 
 void LogModel::setLines(const QList<GitHub::LogLine> &lines) {
@@ -31,9 +33,11 @@ void LogModel::setLines(const QList<GitHub::LogLine> &lines) {
     } else if (lines.size() != old || old == 0 || lines.last().text != m_lines.last().text) {
         beginResetModel();
         m_lines = lines;
+        m_headings.clear();
+        m_marks.clear();
+        m_starts.clear();
         endResetModel();
     }
-    emit firstErrorChanged();
 }
 
 void LogModel::clear() {
@@ -41,8 +45,10 @@ void LogModel::clear() {
         return;
     beginResetModel();
     m_lines.clear();
+    m_headings.clear();
+    m_marks.clear();
+    m_starts.clear();
     endResetModel();
-    emit firstErrorChanged();
 }
 
 QString LogModel::text() const {
@@ -52,13 +58,48 @@ QString LogModel::text() const {
     return out.join('\n');
 }
 
-int LogModel::firstError() const {
-    return nextError(-1);
+void LogModel::touch(const QList<int> &roles) {
+    if (!m_lines.isEmpty())
+        emit dataChanged(index(0), index(m_lines.size() - 1), roles);
 }
 
-int LogModel::nextError(int after) const {
-    for (int i = after + 1; i < m_lines.size(); ++i)
-        if (m_lines.at(i).kind == GitHub::Error)
-            return i;
-    return -1;
+void LogModel::setSteps(const QList<int> &starts, const QStringList &names) {
+    QHash<int, QString> headings;
+    for (int i = 0; i < starts.size(); ++i)
+        if (starts[i] >= 0)
+            headings.insert(starts[i], names.value(i));
+    m_starts = starts;
+    if (headings == m_headings)
+        return;
+    m_headings = headings;
+    touch({StepRole});
+}
+
+void LogModel::setFailures(const QList<Failures::Failure> &failures) {
+    QHash<int, int> marks;
+    for (const auto &failure : failures) {
+        for (int i = failure.first; i <= failure.last; ++i)
+            if (!marks.contains(i))
+                marks.insert(i, InFailure);
+        marks.insert(failure.line, FailureLine);
+    }
+    if (marks == m_marks)
+        return;
+    m_marks = marks;
+    touch({MarkRole});
+}
+
+int LogModel::stepAt(int row) const {
+    int found = -1;
+    for (int i = 0; i < m_starts.size(); ++i)
+        if (m_starts[i] >= 0 && m_starts[i] <= row)
+            found = i;
+    return found;
+}
+
+int LogModel::stepEnd(int stepIndex) const {
+    for (int i = stepIndex + 1; i < m_starts.size(); ++i)
+        if (m_starts[i] >= 0)
+            return m_starts[i] - 1;
+    return m_lines.size() - 1;
 }

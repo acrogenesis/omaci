@@ -1,122 +1,200 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QTimer>
 #include <QVariantList>
 #include <functional>
 
+#include "estimate.h"
+#include "failures.h"
 #include "logmodel.h"
 
-// Watches the GitHub Actions runs of one repository through the gh CLI, which
-// already holds the user's login. Polls quickly while something is running
-// and slowly when everything is done.
+// Watches the builds of one repository through the gh CLI, which already
+// holds the user's login. A build is a commit with all its workflow runs
+// rolled up. Polls quickly while one is running and slowly when all are done.
 class Backend : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString repo READ repo NOTIFY repoChanged)
-    Q_PROPERTY(QVariantList runs READ runs NOTIFY runsChanged)
+    Q_PROPERTY(QVariantList builds READ builds NOTIFY buildsChanged)
+    Q_PROPERTY(QString selectedKey READ selectedKey NOTIFY selectionChanged)
+    Q_PROPERTY(int selectedIndex READ selectedIndex NOTIFY selectionChanged)
+    Q_PROPERTY(QVariantMap selectedBuild READ selectedBuild NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList jobs READ jobs NOTIFY jobsChanged)
-    Q_PROPERTY(qlonglong selectedRunId READ selectedRunId NOTIFY selectionChanged)
     Q_PROPERTY(qlonglong selectedJobId READ selectedJobId NOTIFY selectionChanged)
-    Q_PROPERTY(int selectedRunIndex READ selectedRunIndex NOTIFY selectionChanged)
-    Q_PROPERTY(QVariantMap selectedRun READ selectedRun NOTIFY selectionChanged)
     Q_PROPERTY(QVariantMap selectedJob READ selectedJob NOTIFY selectionChanged)
+    Q_PROPERTY(QVariantList steps READ steps NOTIFY stepsChanged)
+    Q_PROPERTY(int selectedStep READ selectedStep NOTIFY stepsChanged)
     Q_PROPERTY(LogModel *log READ log CONSTANT)
     Q_PROPERTY(QString logStatus READ logStatus NOTIFY logStatusChanged)
+    Q_PROPERTY(QVariantList failures READ failures NOTIFY failuresChanged)
+    Q_PROPERTY(QVariantMap estimate READ estimate NOTIFY estimateChanged)
+    Q_PROPERTY(QVariantList history READ history NOTIFY historyChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
-    Q_PROPERTY(QDateTime lastUpdated READ lastUpdated NOTIFY runsChanged)
-    Q_PROPERTY(QString filter READ filter NOTIFY runsChanged)
-    Q_PROPERTY(QString commit READ commit NOTIFY runsChanged)
-    Q_PROPERTY(bool showSkipped READ showSkipped NOTIFY runsChanged)
-    Q_PROPERTY(int activeCount READ activeCount NOTIFY runsChanged)
+    Q_PROPERTY(QDateTime lastUpdated READ lastUpdated NOTIFY buildsChanged)
+    Q_PROPERTY(QString branchFilter READ branchFilter NOTIFY buildsChanged)
+    Q_PROPERTY(bool showSkipped READ showSkipped NOTIFY buildsChanged)
+    Q_PROPERTY(int activeCount READ activeCount NOTIFY buildsChanged)
 
 public:
     explicit Backend(const QString &repo, bool demo = false, QObject *parent = nullptr);
 
+    // Never starts gh: the tests hand the backend its answers themselves.
+    void setOffline(bool offline) { m_offline = offline; }
+
     QString repo() const { return m_repo; }
-    QVariantList runs() const { return m_runs; }
+    QVariantList builds() const { return m_builds; }
+    QString selectedKey() const { return m_key; }
+    int selectedIndex() const;
+    QVariantMap selectedBuild() const;
     QVariantList jobs() const { return m_jobs; }
-    qlonglong selectedRunId() const { return m_runId; }
     qlonglong selectedJobId() const { return m_jobId; }
-    int selectedRunIndex() const;
-    QVariantMap selectedRun() const;
     QVariantMap selectedJob() const;
+    QVariantList steps() const { return m_steps; }
+    int selectedStep() const { return m_step; }
     LogModel *log() { return &m_log; }
     QString logStatus() const { return m_logStatus; }
+    QVariantList failures() const { return m_failures; }
+    QVariantMap estimate() const { return m_estimate; }
+    QVariantList history() const { return m_history; }
     QString error() const { return m_error; }
-    bool busy() const { return m_pending > 0; }
+    bool busy() const { return m_running > 0; }
     QDateTime lastUpdated() const { return m_lastUpdated; }
-    QString filter() const { return m_filter; }
-    QString commit() const { return m_commit; }
+    QString branchFilter() const { return m_branch; }
     bool showSkipped() const { return m_showSkipped; }
     int activeCount() const;
 
     Q_INVOKABLE void refresh();
-    // Shows one repository, and with a sha only the runs of that commit, which
-    // is how the bar widget hands over a build. Another repository starts over.
+    // Shows one repository, and with a sha the build of that commit selected,
+    // which is how the bar widget hands over a build. Another repository
+    // starts over.
     Q_INVOKABLE void show(const QString &repo, const QString &sha = {});
-    Q_INVOKABLE void clearCommit();
-    Q_INVOKABLE void selectRun(qlonglong id);
+    Q_INVOKABLE void selectBuild(const QString &key);
     Q_INVOKABLE void selectJob(qlonglong id);
-    Q_INVOKABLE void moveRun(int delta);
+    Q_INVOKABLE void selectStep(int index);
+    Q_INVOKABLE void moveBuild(int delta);
     Q_INVOKABLE void moveJob(int delta);
-    Q_INVOKABLE void cycleFilter();
+    // The next step, counted from `from`, that has a place in the log; makes
+    // it the picked step and returns its index, or -1 when there is none.
+    Q_INVOKABLE int moveStep(int from, int delta);
+    Q_INVOKABLE void toggleBranch();
     Q_INVOKABLE void toggleSkipped();
+
+    // The address of the picked job, or of its run when no job is picked.
+    Q_INVOKABLE QString shareUrl() const;
+    // The same, on the picked step when there is one: what `O` opens.
+    Q_INVOKABLE QString openUrl() const;
+    // What failed, where, and the text of it: something to paste to an agent.
+    Q_INVOKABLE QString failureReport() const;
+    Q_INVOKABLE QString copyLink();
+    Q_INVOKABLE bool copyFailure();
     Q_INVOKABLE void copyLog();
 
-    // Applies a runs response the way a poll does. Public so tests can drive
-    // the selection and notification logic without a network.
+    // Apply responses the way a poll does. Public so tests can drive the
+    // selection, the estimate and the notifications without a network.
     void applyRuns(const QVariantList &runs);
-    void applyJobs(qlonglong runId, const QVariantList &jobs);
+    void applyJobs(qlonglong runId, const QVariantList &jobs, bool final = true);
+    void applyLog(qlonglong jobId, const QByteArray &raw, bool final = true);
 
 signals:
     void repoChanged();
-    void runsChanged();
+    void buildsChanged();
     void jobsChanged();
+    void stepsChanged();
     void selectionChanged();
     void logStatusChanged();
     void logReset();
+    void failuresChanged();
+    void estimateChanged();
+    void historyChanged();
     void errorChanged();
     void busyChanged();
-    void runFinished(const QVariantMap &run);
+    void buildFinished(const QVariantMap &build);
 
 private:
     using Done = std::function<void(bool ok, const QByteArray &out, const QString &err)>;
+    struct Call {
+        QStringList args;
+        Done done;
+    };
+    struct Kept {
+        QByteArray etag;
+        QByteArray body;
+    };
+    struct RunJobs {
+        QVariantList jobs;
+        bool final = false;
+        QString updatedAt;
+    };
+
     void gh(const QStringList &args, Done done);
+    void pump();
+    void api(const QString &path, Done done);
+    void rebuild();
+    void filterBuilds();
+    void fetchCommit();
     void fetchJobs();
+    void fetchRunJobs(qlonglong runId, bool final, const QString &updatedAt);
     void fetchLog();
-    void filterRuns();
+    void rebuildJobs();
+    void computeEstimate();
+    void annotateLog();
     void pickJob();
+    void clearJob();
+    QVariantMap buildByKey(const QString &key) const;
+    QList<Estimate::Earlier> earlierBuilds(const QVariantList &like) const;
+    QHash<QString, double> usualSteps(const QString &jobKey) const;
     void setError(const QString &error);
     void setLogStatus(const QString &status);
     void schedule();
-    void notify(const QVariantMap &run);
+    void notify(const QVariantMap &build);
 
     QString m_repo;
     QString m_gh;
     bool m_demo = false;
+    bool m_offline = false;
     QDateTime m_started = QDateTime::currentDateTimeUtc();
-    QVariantList m_allRuns;
-    QVariantList m_runs;
+
+    QList<Call> m_queue;
+    int m_running = 0;
+    QHash<QString, Kept> m_kept;
+
+    QVariantList m_listRuns;
+    QVariantList m_extraRuns;
+    QVariantList m_allBuilds;
+    QVariantList m_builds;
+    QString m_key;
+    QString m_wantCommit;
+    QString m_commitFetched;
+
+    QHash<qlonglong, RunJobs> m_jobsOfRun;
+    QSet<qlonglong> m_jobsInFlight;
+    QVariantList m_realJobs;
     QVariantList m_jobs;
-    qlonglong m_runId = 0;
-    qlonglong m_jobsRunId = 0;
-    QString m_jobsUpdatedAt;
+    QVariantList m_like;
     qlonglong m_jobId = 0;
     bool m_jobPinned = false;
+    QVariantList m_steps;
+    int m_step = -1;
+
     qlonglong m_logJobId = 0;
     bool m_logFinal = false;
     bool m_fetchingRuns = false;
-    bool m_fetchingJobs = false;
     bool m_fetchingLog = false;
     LogModel m_log;
     QString m_logStatus;
+    QList<Failures::Failure> m_found;
+    QVariantList m_failures;
+
+    QVariantMap m_estimate;
+    QVariantList m_history;
     QString m_error;
-    int m_pending = 0;
     QDateTime m_lastUpdated;
-    QString m_filter;
-    QString m_commit;
+    QString m_branch;
     bool m_showSkipped = false;
     QTimer m_poll;
+    QTimer m_tick;
 };

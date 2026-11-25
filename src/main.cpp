@@ -1,4 +1,4 @@
-// ciwatch — live GitHub Actions status and logs for one repository.
+// ciwatch — the builds of one repository, live: how far, how long still, and what failed.
 
 #include <QCommandLineParser>
 #include <QGuiApplication>
@@ -11,6 +11,7 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QUrl>
 
 #include "backend.h"
@@ -43,10 +44,57 @@ static void raise(QQuickWindow *window) {
         QProcess::startDetached("hyprctl", {"dispatch", "focuswindow", "class:^(ciwatch)$"});
 }
 
+// Draws the window into a file without ever showing it: walks through the
+// scene's steps (another build, another job, the help), lets the window
+// settle, and saves what it looks like.
+static void screenshot(QQuickWindow *window, Backend *backend, const QStringList &scene, const QString &file) {
+    auto *steps = new QStringList(scene);
+    auto *timer = new QTimer(window);
+    timer->setInterval(700);
+    QObject::connect(timer, &QTimer::timeout, window, [=] {
+        if (steps->isEmpty()) {
+            timer->stop();
+            QTimer::singleShot(1300, window, [=] {
+                const bool saved = window->grabWindow().save(file);
+                if (!saved)
+                    qWarning("Couldn't save the screenshot to %s", qPrintable(file));
+                QCoreApplication::exit(saved ? 0 : 1);
+            });
+            return;
+        }
+        const auto step = steps->takeFirst();
+        if (step == "build+")
+            backend->moveBuild(1);
+        else if (step == "build-")
+            backend->moveBuild(-1);
+        else if (step == "job+")
+            backend->moveJob(1);
+        else if (step == "job-")
+            backend->moveJob(-1);
+        else if (step == "skipped")
+            backend->toggleSkipped();
+        else if (step == "branch")
+            backend->toggleBranch();
+        else if (step != "wait")
+            QMetaObject::invokeMethod(window, "scene", Q_ARG(QVariant, step));
+    });
+    timer->start();
+}
+
 int main(int argc, char *argv[]) {
+    // A screenshot is drawn offscreen, whatever the session is: it must
+    // never put a window on the desktop.
+    for (int i = 1; i < argc; ++i) {
+        if (QByteArray(argv[i]).startsWith("--screenshot")) {
+            qputenv("QT_QPA_PLATFORM", "offscreen");
+            if (qEnvironmentVariableIsEmpty("QT_QUICK_BACKEND"))
+                qputenv("QT_QUICK_BACKEND", "software");
+        }
+    }
+
     QGuiApplication app(argc, argv);
     app.setApplicationName("ciwatch");
-    app.setApplicationVersion("0.2.0");
+    app.setApplicationVersion("0.3.0");
 
     // Matches the window to ciwatch.desktop, so the compositor (Wayland app_id)
     // and the launcher pick up the installed icon.
@@ -54,25 +102,41 @@ int main(int argc, char *argv[]) {
     app.setWindowIcon(QIcon::fromTheme("ciwatch"));
 
     QCommandLineParser parser;
-    parser.setApplicationDescription("Live GitHub Actions status and logs for one repository.");
+    parser.setApplicationDescription("The builds of one repository, live: how far, how long still, and what failed.");
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument("repo", "The repository to watch, as owner/name (default wbso-ai/application).");
-    QCommandLineOption shaOption("sha", "Show only the runs of this commit.", "sha");
+    QCommandLineOption shaOption("sha", "Open on the build of this commit.", "sha");
     parser.addOption(shaOption);
-    QCommandLineOption demoOption("demo", "Show invented runs instead of asking GitHub, for screenshots and trying it out.");
+    QCommandLineOption demoOption("demo", "Show invented builds instead of asking GitHub, for screenshots and trying it out.");
     parser.addOption(demoOption);
+    // For the README's screenshots and for looking at a change without a window.
+    QCommandLineOption screenshotOption("screenshot", "Draw the window offscreen into this PNG and quit.", "file");
+    screenshotOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(screenshotOption);
+    QCommandLineOption sceneOption("scene", "What to do before the screenshot, comma separated.", "steps");
+    sceneOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(sceneOption);
+    QCommandLineOption sizeOption("size", "The size of the screenshot, as 1440x900.", "size");
+    sizeOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(sizeOption);
+    QCommandLineOption themeOption("theme", "A directory to read the theme from instead of Omarchy's.", "directory");
+    themeOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(themeOption);
     parser.process(app);
     const bool demo = parser.isSet(demoOption);
+    const bool shot = parser.isSet(screenshotOption);
     const auto repo = parser.positionalArguments().value(0, demo ? "acme/storefront" : "wbso-ai/application");
     const auto sha = parser.value(shaOption).toLower();
 
-    if (!demo && handOver(repo, sha))
+    if (!demo && !shot && handOver(repo, sha))
         return 0;
 
     QQuickStyle::setStyle("Material");
 
-    Theme theme;
+    // A screenshot shows the app's own colours unless it is given a theme,
+    // so the README's pictures don't depend on whose desktop drew them.
+    Theme theme(parser.isSet(themeOption) ? parser.value(themeOption) : shot ? QString("/nonexistent/ciwatch") : QString());
     Backend backend(repo, demo);
 
     QQmlApplicationEngine engine;
@@ -86,7 +150,7 @@ int main(int argc, char *argv[]) {
     // A demo window stays out of the way of the real one. A socket left
     // behind by a crash would stop the next launch listening.
     QLocalServer server;
-    if (!demo) {
+    if (!demo && !shot) {
         QLocalServer::removeServer(socketName());
         server.setSocketOptions(QLocalServer::UserAccessOption);
         server.listen(socketName());
@@ -104,6 +168,15 @@ int main(int argc, char *argv[]) {
             });
         }
     });
+
+    if (shot && window) {
+        const auto size = parser.value(sizeOption).split('x');
+        if (size.size() == 2) {
+            window->setWidth(size[0].toInt());
+            window->setHeight(size[1].toInt());
+        }
+        screenshot(window, &backend, parser.value(sceneOption).split(',', Qt::SkipEmptyParts), parser.value(screenshotOption));
+    }
 
     backend.show(repo, sha);
     return app.exec();
