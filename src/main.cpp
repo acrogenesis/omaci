@@ -15,6 +15,7 @@
 #include <QUrl>
 
 #include "backend.h"
+#include "github.h"
 #include "theme.h"
 
 // One window, however often the bar widget asks for one: a second launch
@@ -32,6 +33,26 @@ static bool handOver(const QString &repo, const QString &sha) {
     socket.waitForBytesWritten(300);
     socket.disconnectFromServer();
     return true;
+}
+
+// The repository of the checkout ciwatch is started in: its origin on
+// GitHub, or else the first remote that is on GitHub. Empty outside one.
+static QString repoOfDirectory() {
+    QProcess git;
+    git.start("git", {"config", "--get-regexp", R"(^remote\..*\.url$)"});
+    if (!git.waitForFinished(2000) || git.exitStatus() != QProcess::NormalExit || git.exitCode() != 0)
+        return {};
+    QString first;
+    for (const auto &line : QString::fromUtf8(git.readAllStandardOutput()).split('\n', Qt::SkipEmptyParts)) {
+        const auto repo = GitHub::repoFromRemote(line.section(' ', 1));
+        if (repo.isEmpty())
+            continue;
+        if (line.section(' ', 0, 0) == "remote.origin.url")
+            return repo;
+        if (first.isEmpty())
+            first = repo;
+    }
+    return first;
 }
 
 static void raise(QQuickWindow *window) {
@@ -109,7 +130,8 @@ int main(int argc, char *argv[]) {
     parser.setApplicationDescription("The builds of one repository, live: how far, how long still, and what failed.");
     parser.addHelpOption();
     parser.addVersionOption();
-    parser.addPositionalArgument("repo", "The repository to watch, as owner/name (default wbso-ai/application).");
+    parser.addPositionalArgument("repo", "The repository to watch, as owner/name. Without one: the repository of "
+                                         "the current directory, or else the one watched last, or else a menu of yours.");
     QCommandLineOption shaOption("sha", "Open on the build of this commit.", "sha");
     parser.addOption(shaOption);
     QCommandLineOption demoOption("demo", "Show invented builds instead of asking GitHub, for screenshots and trying it out.");
@@ -133,7 +155,9 @@ int main(int argc, char *argv[]) {
     parser.process(app);
     const bool demo = parser.isSet(demoOption);
     const bool shot = parser.isSet(screenshotOption);
-    const auto repo = parser.positionalArguments().value(0, demo ? "acme/storefront" : "wbso-ai/application");
+    auto repo = parser.positionalArguments().value(0);
+    if (repo.isEmpty())
+        repo = demo ? QString("acme/storefront") : repoOfDirectory();
     const auto sha = parser.value(shaOption).toLower();
 
     if (!demo && !shot && handOver(repo, sha))

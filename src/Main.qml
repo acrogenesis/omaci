@@ -17,7 +17,7 @@ ApplicationWindow {
     visible: true
     // The answer in the title too, where the compositor and the window
     // switcher show it without the window being in front.
-    title: "CI Watch · " + backend.repo + (win.buildActive && win.headline ? " · " + win.headline : "")
+    title: "CI Watch" + (backend.repo ? " · " + backend.repo : "") + (win.buildActive && win.headline ? " · " + win.headline : "")
     color: theme.background
 
     readonly property real cw: theme.cellWidth
@@ -29,6 +29,7 @@ ApplicationWindow {
     readonly property bool buildActive: build.state === "running" || build.state === "queued"
 
     property bool helpVisible: false
+    property bool repoMenuVisible: false
     // The log alone, for reading: the build and its timeline step aside.
     property bool tall: false
     // Long log lines wrap onto the next line instead of running off to the
@@ -216,6 +217,7 @@ ApplicationWindow {
     // For screenshots: main.cpp walks the window through a scene.
     function scene(step) {
         if (step === "help") win.helpVisible = true
+        else if (step === "repositories") win.repoMenuVisible = true
         else if (step === "tall") win.tall = true
         else if (step === "failure+") win.jumpToFailure(win.failureIndex + 1)
         else if (step === "step+") win.moveStep(1)
@@ -232,6 +234,7 @@ ApplicationWindow {
         onActivated: win.helpVisible ? win.helpVisible = false : win.tall = false
     }
     Shortcut { sequence: "Q"; onActivated: Qt.quit() }
+    Shortcut { sequence: "G"; onActivated: { win.helpVisible = false; win.repoMenuVisible = true } }
     Shortcut { sequences: ["Space", "R", "Ctrl+R"]; onActivated: backend.refresh() }
     Shortcut { sequences: ["J", "Down"]; onActivated: win.moveBuild(1) }
     Shortcut { sequences: ["K", "Up"]; onActivated: win.moveBuild(-1) }
@@ -275,7 +278,12 @@ ApplicationWindow {
                 spacing: win.cw
 
                 Mono { text: "ciwatch"; color: theme.accent; font.bold: true }
-                Mono { text: backend.repo; font.bold: true }
+                Keycap {
+                    key: "g"
+                    label: backend.repo || "pick a repository"
+                    strong: true
+                    onClicked: win.repoMenuVisible = true
+                }
                 // The filters, each a box that is filled while it is on, so
                 // what the list leaves out is never a guess.
                 Mono { text: "filter"; color: theme.faint }
@@ -1122,6 +1130,25 @@ ApplicationWindow {
         Timer { id: toastTimer; interval: 2200; onTriggered: toast.opacity = 0 }
     }
 
+    // Which repository, on g, and on its own when there is none yet.
+    RepositoryMenu {
+        open: win.repoMenuVisible || backend.repo === ""
+        required: backend.repo === ""
+        repositories: backend.repositories
+        loading: backend.repositoriesLoading
+        error: backend.repositoriesError
+        current: backend.repo
+        now: win.now
+        onOpenChanged: if (open) backend.fetchRepositories()
+        Component.onCompleted: if (open) backend.fetchRepositories()
+        onPicked: name => {
+            win.repoMenuVisible = false
+            win.focusPanel = "builds"
+            backend.show(name, "")
+        }
+        onClosed: win.repoMenuVisible = false
+    }
+
     // Every shortcut, on ?.
     Rectangle {
         anchors.fill: parent
@@ -1171,6 +1198,7 @@ ApplicationWindow {
                             ["pgup / pgdn", "scroll the log"],
                             ["home / end", "top of the log, follow the end"],
                             ["space / r", "refresh now"],
+                            ["g", "watch another repository"],
                             ["esc", "close this, or the tall log"],
                             ["?", "show or hide this help"], ["q", "quit"]
                         ]

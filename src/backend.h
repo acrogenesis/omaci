@@ -44,6 +44,11 @@ class Backend : public QObject {
     Q_PROPERTY(bool runningOnly READ runningOnly NOTIFY buildsChanged)
     Q_PROPERTY(bool showSkipped READ showSkipped NOTIFY buildsChanged)
     Q_PROPERTY(int activeCount READ activeCount NOTIFY buildsChanged)
+    // Every repository the gh login can see, most recently pushed first, for
+    // the menu that picks one.
+    Q_PROPERTY(QVariantList repositories READ repositories NOTIFY repositoriesChanged)
+    Q_PROPERTY(bool repositoriesLoading READ repositoriesLoading NOTIFY repositoriesChanged)
+    Q_PROPERTY(QString repositoriesError READ repositoriesError NOTIFY repositoriesChanged)
 
 public:
     explicit Backend(const QString &repo, bool demo = false, QObject *parent = nullptr);
@@ -77,12 +82,23 @@ public:
     bool runningOnly() const { return m_runningOnly; }
     bool showSkipped() const { return m_showSkipped; }
     int activeCount() const;
+    QVariantList repositories() const { return m_repositories; }
+    bool repositoriesLoading() const { return m_repositoriesLoading; }
+    QString repositoriesError() const { return m_repositoriesError; }
+
+    // The repository a window opened without one shows: the one whose runs
+    // came in last, in any earlier window.
+    static QString rememberedRepo();
 
     Q_INVOKABLE void refresh();
     // Shows one repository, and with a sha the build of that commit selected,
     // which is how the bar widget hands over a build. Another repository
-    // starts over.
+    // starts over. Without one, a window that shows a repository keeps it and
+    // an empty one takes the remembered one, if there is one.
     Q_INVOKABLE void show(const QString &repo, const QString &sha = {});
+    // Asks GitHub for the repositories the menu offers, a page at a time,
+    // unless that was done in the last few minutes.
+    Q_INVOKABLE void fetchRepositories();
     Q_INVOKABLE void selectBuild(const QString &key);
     Q_INVOKABLE void selectJob(qlonglong id);
     Q_INVOKABLE void selectStep(int index);
@@ -131,6 +147,7 @@ signals:
     void previousChanged();
     void errorChanged();
     void busyChanged();
+    void repositoriesChanged();
     void buildFinished(const QVariantMap &build);
 
 private:
@@ -162,6 +179,9 @@ private:
     void computeEstimate();
     void computePrevious();
     void fetchDefaultBranch();
+    void fetchRepositoryPage(int page, const QVariantList &found, bool showPages);
+    void setRepositories(const QVariantList &repositories);
+    void remember(const QString &repo);
     QString baseBranch() const;
     void annotateLog();
     void pickJob();
@@ -222,6 +242,11 @@ private:
     QString m_branch;
     bool m_showSkipped = false;
     bool m_runningOnly = false;
+    QVariantList m_repositories;
+    bool m_repositoriesLoading = false;
+    QString m_repositoriesError;
+    QDateTime m_repositoriesFetched;
+    QString m_remembered;
     QTimer m_poll;
     QTimer m_tick;
 };

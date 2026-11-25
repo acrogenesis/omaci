@@ -25,10 +25,12 @@ Omarchy, which already ships everything the build needs: Qt 6, `qmake6` and a co
 ## Which repository
 
 ```bash
-ciwatch                                  # wbso-ai/application, the one I watch
+ciwatch                                  # the repository of the directory you are in
 ciwatch basecamp/omarchy                 # any other
 ciwatch basecamp/omarchy --sha 4f1c2ab   # open on the build of one commit
 ```
+
+Started without one, from the launcher say, it opens on the repository of the directory it was started in, and outside a checkout on the one you watched last. The first time, when there is no last one, it opens on a menu of every repository your `gh` login can see, the most recently pushed first, and `G` brings that menu up whenever you want another. Typing narrows it (`acme api` finds `acme/storefront-api`), the arrows and Enter pick, and a whole `owner/name` that isn't yours, a public repository of somebody else's, can be opened as typed.
 
 There is only ever one window. Starting it again while it is open hands the repository and commit over to that window and brings it to the front, rather than opening a second one next to it.
 
@@ -138,6 +140,7 @@ Every one of these is also something you can click.
 | `PgUp` / `PgDn` | scroll the log |
 | `Home` / `End` | top of the log / back to following the end |
 | `Space` / `R` / `Ctrl+R` | refresh now |
+| `G` | watch another repository |
 | `Esc` | close the help, or leave the tall log |
 | `?` | every shortcut, in the window |
 | `Q` | quit |
@@ -147,6 +150,8 @@ Every one of these is also something you can click.
 GitHub allows 5000 requests an hour per user, shared with everything else that uses your `gh` login.
 
 The list of runs is one request a poll, and so are the jobs of each run of your build that is still going. Both are sent with the `ETag` of the previous answer, and GitHub does not count the "nothing changed" it then usually sends back, so those only cost something when a run or a step actually moved. The log of the running job is one request a poll and always counts: about 600 an hour while you watch a build. A finished run's jobs are fetched once and kept for as long as the window is open.
+
+The menu of repositories is one request per hundred repositories, when you open it, and again at most every five minutes.
 
 The comparison needs the jobs of the previous build on main, a request or two, once per build you look at. The estimate needs the jobs of the last six builds like yours, about a dozen requests, once, and only when the build you are looking at is running. With nothing running, the app sends one request a minute, which mostly costs nothing either.
 
@@ -158,7 +163,7 @@ The whole palette, live: background, text, accent, and the theme's own green, re
 
 ## Privacy
 
-Nothing is written to disk. Builds, jobs and logs live in memory while the window is open and are gone when it closes. The only things that leave the app are the `gh api` calls to GitHub and a `notify-send` when a build finishes. Log lines are drawn as plain text, so nothing in a log can make the window load anything.
+The one thing written to disk is the name of the repository you watched last, in `~/.local/state/ciwatch/state.ini`, so the next window opens on it. Builds, jobs and logs live in memory while the window is open and are gone when it closes. The only things that leave the app are the `gh api` calls to GitHub and a `notify-send` when a build finishes. Log lines are drawn as plain text, so nothing in a log can make the window load anything.
 
 ## Trying it without GitHub
 

@@ -436,12 +436,45 @@ QByteArray log(qint64 jobId) {
     return out;
 }
 
+// What `user/repos` would list for someone at the invented shop: their own
+// repositories and the company's, most recently pushed first.
+QByteArray repositories() {
+    struct Repo {
+        QString name, description;
+        bool isPrivate, archived;
+        int pushedAgo; // seconds before the app started
+    };
+    static const QList<Repo> list{
+        {"acme/storefront", "The shop", true, false, 192},
+        {"acme/storefront-api", "Orders, stock and payments for the shop", true, false, 41 * 60},
+        {"mira/dotfiles", "", false, false, 3 * 3600},
+        {"acme/design-system", "Buttons, forms and the type scale", true, false, 5 * 3600},
+        {"acme/warehouse", "Picking lists and shipping labels", true, false, 26 * 3600},
+        {"acme/infrastructure", "Servers, DNS and the deploy pipeline", true, false, 2 * 86400},
+        {"acme/mobile", "The shop as an app", true, false, 4 * 86400},
+        {"mira/blog", "", false, false, 9 * 86400},
+        {"acme/newsletter", "The weekly mail to customers", true, false, 23 * 86400},
+        {"acme/handbook", "How we work", false, false, 40 * 86400},
+        {"acme/checkout-v1", "The old checkout, before Turbo", true, true, 300 * 86400},
+    };
+    QJsonArray out;
+    for (const auto &repo : list)
+        out.append(QJsonObject{{"full_name", repo.name},
+                               {"description", repo.description.isEmpty() ? QJsonValue() : QJsonValue(repo.description)},
+                               {"private", repo.isPrivate},
+                               {"archived", repo.archived},
+                               {"pushed_at", iso(origin.addSecs(-repo.pushedAgo))}});
+    return QJsonDocument(out).toJson(QJsonDocument::Compact);
+}
+
 }
 
 QByteArray respond(const QString &path, const QDateTime &started) {
     origin = QDateTime::fromSecsSinceEpoch(started.toSecsSinceEpoch(), QTimeZone::UTC);
     const auto bare = path.section('?', 0, 0);
     const auto parts = bare.split('/');
+    if (bare == "user/repos")
+        return repositories();
     if (bare.endsWith("/logs"))
         return log(parts.value(parts.size() - 2).toLongLong());
     if (bare.endsWith("/jobs"))

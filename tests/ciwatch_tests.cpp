@@ -7,7 +7,9 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QSettings>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -92,10 +94,29 @@ static Estimate::Earlier earlier(double test, double image, double deploy) {
             {"deploy", plain("deploy", "success", ready + 2, ready + 2 + deploy)}};
 }
 
+static QString stateFile() {
+    return QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + "/ciwatch/state.ini";
+}
+
+// QTest only types whole strings into widgets; a window gets them a key at a time.
+static void typeInto(QWindow *window, const QString &text) {
+    for (const auto c : text)
+        QTest::keyClick(window, c.toLatin1());
+}
+
 class CiwatchTests : public QObject {
     Q_OBJECT
 
 private slots:
+    // The repository a window remembers goes to a test directory, never to
+    // the one the app itself opens on.
+    void initTestCase()
+    {
+        QStandardPaths::setTestModeEnabled(true);
+        QFile::remove(stateFile());
+    }
+    void cleanupTestCase() { QFile::remove(stateFile()); }
+
     void statesFromStatusAndConclusion()
     {
         QCOMPARE(GitHub::state("in_progress", ""), QString("running"));
@@ -120,6 +141,62 @@ private slots:
         QCOMPARE(r["sha"].toString(), QString("7847dc2"));
         QCOMPARE(r["actor"].toString(), QString("mira"));
         QCOMPARE(r["startedAt"].toString(), QString("2026-10-09T13:17:36Z"));
+    }
+
+    void findsTheRepositoryOfAGitRemote()
+    {
+        QCOMPARE(GitHub::repoFromRemote("git@github.com:wbso-ai/application.git"), QString("wbso-ai/application"));
+        QCOMPARE(GitHub::repoFromRemote("https://github.com/basecamp/omarchy"), QString("basecamp/omarchy"));
+        QCOMPARE(GitHub::repoFromRemote("https://github.com/basecamp/omarchy.git/"), QString("basecamp/omarchy"));
+        QCOMPARE(GitHub::repoFromRemote("ssh://git@github.com/jankeesvw/dot.files.git"), QString("jankeesvw/dot.files"));
+        QCOMPARE(GitHub::repoFromRemote("ssh://git@github.com:22/owner/repo"), QString("owner/repo"));
+        QCOMPARE(GitHub::repoFromRemote("https://token@github.com/owner/repo.git\n"), QString("owner/repo"));
+        QVERIFY(GitHub::repoFromRemote("git@gitlab.com:owner/repo.git").isEmpty());
+        QVERIFY(GitHub::repoFromRemote("https://github.com.evil.example/owner/repo").isEmpty());
+        QVERIFY(GitHub::repoFromRemote("/srv/git/repo.git").isEmpty());
+    }
+
+    void parsesRepositories()
+    {
+        const QByteArray json = R"([{"full_name":"acme/shop","description":null,"private":true,"archived":false,"pushed_at":"2026-11-25T10:00:00Z"},
+                                    {"full_name":"acme/old","description":"Gone","private":false,"archived":true,"pushed_at":"2024-01-01T00:00:00Z"}])";
+        QString error;
+        const auto repositories = GitHub::parseRepositories(json, &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(repositories.size(), 2);
+        QCOMPARE(repositories[0].toMap()["name"].toString(), QString("acme/shop"));
+        QCOMPARE(repositories[0].toMap()["description"].toString(), QString());
+        QVERIFY(repositories[1].toMap()["archived"].toBool());
+        QVERIFY(GitHub::parseRepositories(R"({"message":"Bad credentials"})", &error).isEmpty());
+        QVERIFY(!error.isEmpty());
+    }
+
+    void opensOnTheRepositoryWatchedLast()
+    {
+        // Nothing watched yet: the window stays empty and shows the menu.
+        {
+            Backend backend("");
+            backend.setOffline(true);
+            backend.show("");
+            QVERIFY(backend.repo().isEmpty());
+            QVERIFY(backend.error().isEmpty());
+        }
+        QSettings(stateFile(), QSettings::IniFormat).setValue("repository", "acme/storefront");
+        QCOMPARE(Backend::rememberedRepo(), QString("acme/storefront"));
+        {
+            Backend backend("");
+            backend.setOffline(true);
+            backend.show("");
+            QCOMPARE(backend.repo(), QString("acme/storefront"));
+        }
+        // A second launch without a repository leaves the open window on its own.
+        {
+            Backend backend("owner/repo");
+            backend.setOffline(true);
+            backend.show("owner/repo");
+            backend.show("");
+            QCOMPARE(backend.repo(), QString("owner/repo"));
+        }
     }
 
     void reportsBrokenJson()
@@ -1194,6 +1271,41 @@ private slots:
         QVERIFY(!window->property("helpVisible").toBool());
         QTest::keyClick(window, Qt::Key_Escape);
         QVERIFY(!window->property("tall").toBool());
+
+        // G opens the menu of repositories. What is typed there narrows the
+        // list and never reaches the window's own keys: e would jump to a
+        // failure and s would show the skipped builds.
+        QTest::keyClick(window, Qt::Key_G);
+        QVERIFY(window->property("repoMenuVisible").toBool());
+        QTRY_VERIFY(backend.repositories().size() > 5);
+        QCOMPARE(backend.repositories().last().toMap()["name"].toString(), QString("acme/checkout-v1")); // archived, last
+        auto *menu = window->findChild<QObject *>("repositoryMenu");
+        QVERIFY(menu);
+        const auto failure = window->property("failureIndex").toInt();
+        typeInto(window, "acme des");
+        QCOMPARE(menu->property("shown").toList().size(), 1);
+        QCOMPARE(window->property("failureIndex").toInt(), failure);
+        QVERIFY(!backend.showSkipped());
+        // Esc closes it on the repository it was on.
+        QTest::keyClick(window, Qt::Key_Escape);
+        QVERIFY(!window->property("repoMenuVisible").toBool());
+        QCOMPARE(backend.repo(), QString("acme/storefront"));
+        // A whole owner/name that isn't among them can be opened as typed.
+        QTest::keyClick(window, Qt::Key_G);
+        typeInto(window, "basecamp/omarchy");
+        QCOMPARE(menu->property("typed").toString(), QString("basecamp/omarchy"));
+        QVERIFY(menu->property("shown").toList().value(0).toMap()["typed"].toBool());
+        // Opened again it starts empty; the arrows pick and Enter opens.
+        QTest::keyClick(window, Qt::Key_Escape);
+        QTest::keyClick(window, Qt::Key_G);
+        QVERIFY(menu->property("typed").toString().isEmpty());
+        typeInto(window, "acme/");
+        QTest::keyClick(window, Qt::Key_Down);
+        QCOMPARE(menu->property("index").toInt(), 1);
+        QTest::keyClick(window, Qt::Key_Return);
+        QVERIFY(!window->property("repoMenuVisible").toBool());
+        QCOMPARE(backend.repo(), QString("acme/storefront-api"));
+        QTRY_VERIFY(backend.builds().size() > 10);
 
         QTest::qWait(300);
         QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));

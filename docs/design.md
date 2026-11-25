@@ -116,6 +116,7 @@ Every one of these is also something to click.
 | `S` | show or hide skipped builds |
 | `PgUp` / `PgDn`, `Home`, `End` | scroll the log, top, follow the end |
 | `Space` / `R` / `Ctrl+R` | refresh now |
+| `G` | the menu of repositories, to watch another |
 | `?` | every shortcut |
 | `Esc` | close the help, or leave the tall log |
 | `Q` | quit |
@@ -126,6 +127,7 @@ Every one of these is also something to click.
 - **The jobs** of the build you are looking at: one request per run that is still going (usually one or two), also conditional. A finished run's jobs are fetched once and kept for as long as the window is open.
 - **The log** of the picked job while it runs: one request a poll. This is the one that always counts.
 - **The build before**: the jobs of the previous build on main, a request per run, once per build you look at, and which branch is the default, one request per repository.
+- **The menu of repositories**: `user/repos`, a hundred at a time, most recently pushed first, when the menu opens and again at most every five minutes. The first time the menu fills page by page; after that the old list stays until the new one is whole.
 - **History for the estimate**: the jobs of the last six like builds, about a dozen requests, once, and only when the build you are looking at is running.
 
 Polling is every 6 seconds while a build is running and once a minute otherwise. A running build costs at most 600 counted requests an hour for its log, plus the jobs requests that actually changed (a few per step), against 5000. At most four `gh` processes run at a time.
@@ -141,7 +143,7 @@ The window reads like a terminal program in the family of btop and lazygit, beca
 
 ## What stays the same
 
-Nothing is written to disk. `gh` is the only way to GitHub. Log lines are plain text. The whole Omarchy palette is followed live now, not only the accent, so the window is light on a light theme. `--demo` shows invented builds for an invented repository, and the hidden `--screenshot <file>` draws the window offscreen into a PNG, which is how the screenshots in the README are made and how the layout was checked while building it.
+Nothing is written to disk but the name of the repository watched last, so a window started from the launcher opens on it. `gh` is the only way to GitHub. Log lines are plain text. The whole Omarchy palette is followed live now, not only the accent, so the window is light on a light theme. `--demo` shows invented builds for an invented repository, and the hidden `--screenshot <file>` draws the window offscreen into a PNG, which is how the screenshots in the README are made and how the layout was checked while building it.
 
 ## Known limits
 

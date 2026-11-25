@@ -117,6 +117,35 @@ QVariantList parseJobs(const QByteArray &json, QString *error) {
     return jobs;
 }
 
+QVariantList parseRepositories(const QByteArray &json, QString *error) {
+    QJsonParseError parseError;
+    const auto document = QJsonDocument::fromJson(json, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isArray()) {
+        if (error)
+            *error = QString("GitHub sent a list of repositories that isn't JSON: %1").arg(parseError.errorString());
+        return {};
+    }
+    QVariantList repositories;
+    for (const auto &value : document.array()) {
+        const auto repo = value.toObject();
+        repositories << QVariantMap{
+            {"name", repo["full_name"].toString()},
+            {"description", repo["description"].toString()},
+            {"private", repo["private"].toBool()},
+            {"archived", repo["archived"].toBool()},
+            {"pushedAt", repo["pushed_at"].toString()},
+        };
+    }
+    return repositories;
+}
+
+QString repoFromRemote(const QString &url) {
+    static const QRegularExpression remote(
+        R"(^(?:[a-z+]+://)?(?:[^@/]+@)?github\.com(?::\d+)?[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$)");
+    const auto match = remote.match(url.trimmed());
+    return match.hasMatch() ? match.captured(1) + "/" + match.captured(2) : QString();
+}
+
 QList<LogLine> parseLog(const QByteArray &raw) {
     static const QRegularExpression ansi(R"(\x1b\[[0-9;?]*[A-Za-z])");
     static const QRegularExpression stamp(R"(^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z) ?)");

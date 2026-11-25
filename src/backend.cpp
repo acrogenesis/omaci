@@ -8,7 +8,9 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QStandardPaths>
+#include <algorithm>
 
 #include "compare.h"
 #include "demo.h"
@@ -205,7 +207,7 @@ QString Backend::baseBranch() const {
 }
 
 void Backend::refresh() {
-    if (m_fetchingRuns)
+    if (m_fetchingRuns || m_repo.isEmpty())
         return;
     m_fetchingRuns = true;
     m_poll.stop();
@@ -234,6 +236,7 @@ void Backend::refresh() {
                 return;
             }
             setError({});
+            remember(repo);
             applyRuns(runs);
             fetchCommit();
             fetchJobs();
@@ -958,9 +961,20 @@ int Backend::moveStep(int from, int delta) {
     return -1;
 }
 
-void Backend::show(const QString &repo, const QString &sha) {
+void Backend::show(const QString &asked, const QString &sha) {
     static const QRegularExpression validRepo(R"(^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$)");
     static const QRegularExpression validSha(R"(^[0-9a-f]{7,40}$)");
+    auto repo = asked.trimmed();
+    if (repo.isEmpty()) {
+        // Started again from the launcher: the window that is open stays on
+        // its repository. A new one opens on the last; without one, the
+        // window asks which (it shows the menu while the repository is empty).
+        if (!m_repo.isEmpty() || m_demo)
+            return;
+        repo = rememberedRepo();
+        if (repo.isEmpty())
+            return;
+    }
     if (!validRepo.match(repo).hasMatch()) {
         setError(QString("\"%1\" isn't a repository; pass it as owner/name.").arg(repo));
         return;
@@ -1078,6 +1092,76 @@ bool Backend::copyFailure() {
 
 void Backend::copyLog() {
     QGuiApplication::clipboard()->setText(m_log.text());
+}
+
+static QString stateFile() {
+    return QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation) + "/ciwatch/state.ini";
+}
+
+QString Backend::rememberedRepo() {
+    return QSettings(stateFile(), QSettings::IniFormat).value("repository").toString();
+}
+
+// Written once a repository has shown its runs, so a typo or a repository
+// without access is never what the next window opens on.
+void Backend::remember(const QString &repo) {
+    if (m_demo || repo == m_remembered)
+        return;
+    m_remembered = repo;
+    QSettings(stateFile(), QSettings::IniFormat).setValue("repository", repo);
+}
+
+void Backend::fetchRepositories() {
+    if (m_repositoriesLoading)
+        return;
+    const auto now = QDateTime::currentDateTimeUtc();
+    if (m_repositoriesFetched.isValid() && m_repositoriesFetched.secsTo(now) < 300 && m_repositoriesError.isEmpty())
+        return;
+    m_repositoriesFetched = now;
+    m_repositoriesLoading = true;
+    m_repositoriesError.clear();
+    emit repositoriesChanged();
+    // The first time the menu fills as the pages come in; after that it keeps
+    // the list it has until the new one is whole.
+    fetchRepositoryPage(1, {}, m_repositories.isEmpty());
+}
+
+// Most recently pushed first, which puts the repositories someone is working
+// in at the top: the menu is mostly opened for one of those.
+void Backend::fetchRepositoryPage(int page, const QVariantList &found, bool showPages) {
+    const auto path = QString("user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member&page=%1")
+                          .arg(page);
+    gh({"api", path}, [this, page, found, showPages](bool ok, const QByteArray &out, const QString &err) {
+        QString parseError;
+        const auto repositories = ok ? GitHub::parseRepositories(out, &parseError) : QVariantList{};
+        if (!ok || !parseError.isEmpty()) {
+            m_repositoriesLoading = false;
+            m_repositoriesError = !ok ? (err.isEmpty() ? "Asking GitHub for your repositories failed." : err) : parseError;
+            if (!found.isEmpty())
+                setRepositories(found);
+            emit repositoriesChanged();
+            return;
+        }
+        const auto all = found + repositories;
+        // A page that isn't full is the last one. Twenty pages is two
+        // thousand repositories, more than a menu is for.
+        const bool more = repositories.size() == 100 && page < 20;
+        if (!more)
+            m_repositoriesLoading = false;
+        if (!more || showPages) {
+            setRepositories(all);
+            emit repositoriesChanged();
+        }
+        if (more)
+            fetchRepositoryPage(page + 1, all, showPages);
+    });
+}
+
+// Archived repositories go last: their builds are history, never news.
+void Backend::setRepositories(const QVariantList &repositories) {
+    m_repositories = repositories;
+    std::stable_partition(m_repositories.begin(), m_repositories.end(),
+                          [](const QVariant &repo) { return !repo.toMap()["archived"].toBool(); });
 }
 
 void Backend::setError(const QString &error) {
